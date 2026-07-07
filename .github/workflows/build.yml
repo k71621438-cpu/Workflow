@@ -1,0 +1,413 @@
+name: Build FaceGate (FFmpeg + libyuv + ShadowHook + APK + Zygisk Module)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main", "master" ]
+
+jobs:
+  # ───────────────────────────────────────────────────────────────────────────
+  # Job 1 — Build all native C/C++ libraries for Android
+  # ───────────────────────────────────────────────────────────────────────────
+  build-native-libs:
+    name: Native Libs (FFmpeg · libyuv · ShadowHook · turbojpeg)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache NDK r25c
+        uses: actions/cache@v4
+        with:
+          path: android-ndk-r25c
+          key: ndk-r25c-linux-v9
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y build-essential nasm yasm wget unzip cmake ninja-build perl python3
+
+      - name: Download Android NDK r25c
+        run: |
+          if [ ! -d "android-ndk-r25c" ]; then
+            wget -q https://dl.google.com/android/repository/android-ndk-r25c-linux.zip
+            unzip -q android-ndk-r25c-linux.zip
+            rm android-ndk-r25c-linux.zip
+          fi
+          echo "NDK=$PWD/android-ndk-r25c"              >> $GITHUB_ENV
+          echo "ANDROID_NDK_ROOT=$PWD/android-ndk-r25c" >> $GITHUB_ENV
+
+      # ── OpenSSL ─────────────────────────────────────────────────────────────
+      - name: Build OpenSSL for Android
+        run: |
+          git clone --depth 1 --branch openssl-3.1.4 \
+            https://github.com/openssl/openssl.git openssl-src
+          TOOLCHAIN=$NDK/toolchains/llvm/prebuilt/linux-x86_64
+          API=24
+
+          build_openssl() {
+            local ABI=$1 ARCH=$2 OPTS=$3
+            export ANDROID_NDK_ROOT=$NDK
+            export PATH=$TOOLCHAIN/bin:$PATH
+            mkdir -p openssl-src/build-$ABI
+            cd openssl-src/build-$ABI
+            ../Configure android-$ARCH -D__ANDROID_API__=$API \
+              --prefix=$GITHUB_WORKSPACE/openssl/$ABI \
+              --openssldir=$GITHUB_WORKSPACE/openssl/$ABI \
+              no-shared no-tests no-ui-console $OPTS
+            make -j$(nproc) && make install_sw
+            cd ../..
+          }
+          build_openssl "arm64-v8a"   "arm64"  ""
+          build_openssl "armeabi-v7a" "arm"    "no-asm"
+          build_openssl "x86_64"      "x86_64" ""
+
+      # ── FFmpeg ──────────────────────────────────────────────────────────────
+      - name: Clone FFmpeg n6.1
+        run: git clone --depth 1 --branch n6.1 https://github.com/FFmpeg/FFmpeg.git ffmpeg-src
+
+      - name: Build FFmpeg for Android
+        working-directory: ffmpeg-src
+        run: |
+          TOOLCHAIN=$NDK/toolchains/llvm/prebuilt/linux-x86_64
+          API=24
+
+          build_abi() {
+            local ABI=$1 ARCH=$2 CPU=$3 TARGET=$4
+            export AR=$TOOLCHAIN/bin/llvm-ar
+            export NM=$TOOLCHAIN/bin/llvm-nm
+            export CC=$TOOLCHAIN/bin/${TARGET}${API}-clang
+            export CXX=$TOOLCHAIN/bin/${TARGET}${API}-clang++
+            export RANLIB=$TOOLCHAIN/bin/llvm-ranlib
+            export STRIP=$TOOLCHAIN/bin/llvm-strip
+            OPENSSL_PREFIX=$GITHUB_WORKSPACE/openssl/$ABI
+            export CFLAGS="-O3 -fPIC -DANDROID -I$OPENSSL_PREFIX/include"
+            export LDFLAGS="-fPIC -L$OPENSSL_PREFIX/lib"
+            make distclean > /dev/null 2>&1 || true
+            ./configure \
+              --target-os=android --arch=$ARCH --cpu=$CPU --enable-cross-compile \
+              --sysroot=$TOOLCHAIN/sysroot --cc=$CC --cxx=$CXX --ar=$AR --nm=$NM \
+              --ranlib=$RANLIB --strip=$STRIP \
+              --prefix=$GITHUB_WORKSPACE/output/$ABI \
+              --pkg-config=false --enable-static --disable-shared \
+              --disable-programs --disable-doc --disable-iconv \
+              --disable-avdevice --disable-postproc --disable-avfilter \
+              --disable-asm --disable-x86asm --enable-pic \
+              --enable-jni --enable-mediacodec --enable-network \
+              --enable-swresample --enable-swscale --enable-openssl \
+              --extra-cflags="-I$OPENSSL_PREFIX/include" \
+              --extra-ldflags="-L$OPENSSL_PREFIX/lib" \
+              --enable-protocol=file,pipe,http,https,tcp,udp,rtp,rtsp,rtmp,hls \
+              --enable-demuxer=rtsp,http,hls,rtmp,mov,mp4,mkv,avi,flv,mpegts,mjpeg,rawvideo \
+              --enable-decoder=h264,h264_mediacodec,hevc,hevc_mediacodec,vp8,vp9,av1,aac,mp3,opus,rawvideo,pcm_s16le \
+              --enable-parser=h264,hevc,vp8,vp9,av1,aac,mpegaudio,opus \
+              --enable-bsf=h264_mp4toannexb,hevc_mp4toannexb,aac_adtstoasc \
+              --enable-muxer=mp4,mov,matroska,null
+            make -j$(nproc) && make install
+          }
+          build_abi "arm64-v8a"   "aarch64" "armv8-a" "aarch64-linux-android"
+          build_abi "armeabi-v7a" "arm"     "armv7-a" "armv7a-linux-androideabi"
+          build_abi "x86_64"      "x86_64"  "x86-64"  "x86_64-linux-android"
+
+      # ── libyuv (Google Chromium) ─────────────────────────────────────────────
+      - name: Build libyuv for Android
+        run: |
+          git clone --depth 1 https://chromium.googlesource.com/libyuv/libyuv libyuv-src
+          LIBYUV_OUT=$GITHUB_WORKSPACE/libyuv-prebuilt
+          mkdir -p $LIBYUV_OUT/include
+          cp -r libyuv-src/include/libyuv* $LIBYUV_OUT/include/
+
+          build_libyuv() {
+            local ABI=$1
+            mkdir -p libyuv-build-$ABI
+            cmake libyuv-src \
+              -DANDROID_ABI=$ABI \
+              -DANDROID_PLATFORM=android-24 \
+              -DCMAKE_TOOLCHAIN_FILE=$NDK/build/cmake/android.toolchain.cmake \
+              -DCMAKE_BUILD_TYPE=MinSizeRel \
+              -GNinja \
+              -B libyuv-build-$ABI
+            cmake --build libyuv-build-$ABI --target yuv -j$(nproc)
+            mkdir -p $LIBYUV_OUT/$ABI
+            cp libyuv-build-$ABI/libyuv.a $LIBYUV_OUT/$ABI/
+          }
+          build_libyuv "arm64-v8a"
+          build_libyuv "armeabi-v7a"
+          build_libyuv "x86_64"
+
+      # ── ShadowHook 2.0.1 — ByteDance, from Maven Central AAR ────────────────
+      - name: Extract ShadowHook from Maven Central AAR
+        run: |
+          wget -q \
+            "https://repo1.maven.org/maven2/com/bytedance/android/shadowhook/2.0.1/shadowhook-2.0.1.aar" \
+            -O shadowhook.zip
+          mkdir -p shadowhook-aar
+          unzip -q shadowhook.zip -d shadowhook-aar
+
+          SH_OUT=$GITHUB_WORKSPACE/shadowhook-prebuilt
+          mkdir -p $SH_OUT/include
+
+          # Headers: prefab first, fall back to the committed header in this repo.
+          # zygisk-module/jni/include/shadowhook.h is committed here alongside the
+          # workflow so the fallback always works even when the AAR has no prefab.
+          if ls shadowhook-aar/prefab/modules/shadowhook/include/*.h 2>/dev/null | grep -q .; then
+            cp shadowhook-aar/prefab/modules/shadowhook/include/*.h "$SH_OUT/include/"
+            echo "ShadowHook headers: from AAR prefab"
+          else
+            cp "$GITHUB_WORKSPACE/zygisk-module/jni/include/shadowhook.h" "$SH_OUT/include/"
+            echo "ShadowHook headers: from committed fallback"
+          fi
+
+          # Extract libraries — ShadowHook 2.x may only ship arm64-v8a and
+          # armeabi-v7a; x86_64 is often absent.  Log a warning and continue.
+          for ABI in arm64-v8a armeabi-v7a x86_64; do
+            mkdir -p "$SH_OUT/$ABI"
+            STATIC="shadowhook-aar/prefab/modules/shadowhook/libs/android.$ABI/libshadowhook.a"
+            SHARED="shadowhook-aar/jni/$ABI/libshadowhook.so"
+            if [ -f "$STATIC" ]; then
+              cp "$STATIC" "$SH_OUT/$ABI/" && echo "ShadowHook $ABI: static"
+            elif [ -f "$SHARED" ]; then
+              cp "$SHARED" "$SH_OUT/$ABI/" && echo "ShadowHook $ABI: shared"
+            else
+              echo "WARNING: ShadowHook $ABI not found in AAR — this ABI will be skipped"
+            fi
+          done
+
+      # ── libjpeg-turbo 3.0.2 ─────────────────────────────────────────────────
+      - name: Build libjpeg-turbo for Android
+        run: |
+          git clone --depth 1 --branch 3.0.2 \
+            https://github.com/libjpeg-turbo/libjpeg-turbo.git turbojpeg-src
+          TJ_OUT=$GITHUB_WORKSPACE/turbojpeg-prebuilt
+          mkdir -p $TJ_OUT/include
+          cp turbojpeg-src/turbojpeg.h "$TJ_OUT/include/" 2>/dev/null || true
+
+          build_tj() {
+            local ABI=$1
+            mkdir -p turbojpeg-build-$ABI
+            cmake turbojpeg-src \
+              -DANDROID_ABI=$ABI \
+              -DANDROID_PLATFORM=android-24 \
+              -DCMAKE_TOOLCHAIN_FILE=$NDK/build/cmake/android.toolchain.cmake \
+              -DCMAKE_BUILD_TYPE=MinSizeRel \
+              -DENABLE_SHARED=OFF -DENABLE_STATIC=ON -DWITH_TURBOJPEG=ON \
+              -GNinja \
+              -B turbojpeg-build-$ABI
+            cmake --build turbojpeg-build-$ABI --target turbojpeg -j$(nproc)
+            mkdir -p "$TJ_OUT/$ABI"
+            cp turbojpeg-build-$ABI/libturbojpeg.a "$TJ_OUT/$ABI/"
+          }
+          build_tj "arm64-v8a"
+          build_tj "armeabi-v7a"
+          build_tj "x86_64"
+
+      # ── Upload all native artifacts ──────────────────────────────────────────
+      - name: Upload FFmpeg
+        uses: actions/upload-artifact@v4
+        with:
+          name: ffmpeg-android-prebuilt
+          path: output/
+          retention-days: 14
+
+      - name: Upload OpenSSL
+        uses: actions/upload-artifact@v4
+        with:
+          name: openssl-android-prebuilt
+          path: openssl/
+          retention-days: 14
+
+      - name: Upload libyuv
+        uses: actions/upload-artifact@v4
+        with:
+          name: libyuv-android-prebuilt
+          path: libyuv-prebuilt/
+          retention-days: 14
+
+      - name: Upload ShadowHook
+        uses: actions/upload-artifact@v4
+        with:
+          name: shadowhook-android-prebuilt
+          path: shadowhook-prebuilt/
+          retention-days: 14
+
+      - name: Upload turbojpeg
+        uses: actions/upload-artifact@v4
+        with:
+          name: turbojpeg-android-prebuilt
+          path: turbojpeg-prebuilt/
+          retention-days: 14
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Job 2 — Build APK (itsme4) + Zygisk Magisk module ZIP
+  # The itsme4 app source is checked out into facegate/ using APP_REPO_PAT.
+  # ───────────────────────────────────────────────────────────────────────────
+  build-apk-and-module:
+    name: APK + Zygisk Module  (facegate/)
+    needs: build-native-libs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout itsme4 into facegate/
+        uses: actions/checkout@v4
+        with:
+          repository: Amkushu999/itsme4
+          token: ${{ secrets.APP_REPO_PAT }}
+          path: facegate
+
+      - name: Download FFmpeg
+        uses: actions/download-artifact@v4
+        with:
+          name: ffmpeg-android-prebuilt
+          path: facegate/ffmpeg-android
+
+      - name: Download OpenSSL
+        uses: actions/download-artifact@v4
+        with:
+          name: openssl-android-prebuilt
+          path: facegate/openssl-android
+
+      - name: Download libyuv
+        uses: actions/download-artifact@v4
+        with:
+          name: libyuv-android-prebuilt
+          path: facegate/libyuv-android
+
+      - name: Download ShadowHook
+        uses: actions/download-artifact@v4
+        with:
+          name: shadowhook-android-prebuilt
+          path: facegate/shadowhook-android
+
+      - name: Download turbojpeg
+        uses: actions/download-artifact@v4
+        with:
+          name: turbojpeg-android-prebuilt
+          path: facegate/turbojpeg-android
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Accept Android licenses
+        run: yes | sdkmanager --licenses || true
+
+      - name: Cache NDK r25c
+        uses: actions/cache@v4
+        with:
+          path: android-ndk-r25c
+          key: ndk-r25c-linux-v9
+
+      - name: Download Android NDK r25c
+        run: |
+          if [ ! -d "android-ndk-r25c" ]; then
+            wget -q https://dl.google.com/android/repository/android-ndk-r25c-linux.zip
+            unzip -q android-ndk-r25c-linux.zip
+            rm android-ndk-r25c-linux.zip
+          fi
+          echo "NDK=$PWD/android-ndk-r25c" >> $GITHUB_ENV
+
+      - name: Generate local.properties
+        working-directory: facegate
+        run: |
+          echo "sdk.dir=$ANDROID_SDK_ROOT"                              >> local.properties
+          echo "ffmpeg.dir=$GITHUB_WORKSPACE/facegate/ffmpeg-android"   >> local.properties
+          echo "openssl.dir=$GITHUB_WORKSPACE/facegate/openssl-android"  >> local.properties
+          echo "libyuv.dir=$GITHUB_WORKSPACE/facegate/libyuv-android"   >> local.properties
+
+      - name: Make gradlew executable
+        working-directory: facegate
+        run: chmod +x ./gradlew
+
+      - name: Build Debug APK
+        working-directory: facegate
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Install CMake + Ninja
+        run: sudo apt-get install -y cmake ninja-build
+
+      - name: Build hookProxy.so (Zygisk module — all ABIs)
+        run: |
+          for ABI in arm64-v8a armeabi-v7a x86_64; do
+            echo "=== Building hookProxy.so for $ABI ==="
+
+            # ShadowHook 2.x may not ship x86_64 in its AAR.
+            # CMakeLists.txt uses FATAL_ERROR when the lib is missing, so skip
+            # the ABI rather than fail the whole job.
+            SH_DIR="facegate/shadowhook-android/$ABI"
+            if [ ! -f "$SH_DIR/libshadowhook.a" ] && [ ! -f "$SH_DIR/libshadowhook.so" ]; then
+              echo "SKIP $ABI — ShadowHook not present in AAR for this ABI"
+              continue
+            fi
+
+            BUILD="facegate/zygisk-build-$ABI"
+            mkdir -p "$BUILD"
+            cmake facegate/zygisk-module/jni \
+              -DANDROID_ABI=$ABI \
+              -DANDROID_PLATFORM=android-28 \
+              -DCMAKE_TOOLCHAIN_FILE=$NDK/build/cmake/android.toolchain.cmake \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DSHADOWHOOK_ROOT=$GITHUB_WORKSPACE/facegate/shadowhook-android \
+              -DLIBYUV_ROOT=$GITHUB_WORKSPACE/facegate/libyuv-android \
+              -DTURBOJPEG_ROOT=$GITHUB_WORKSPACE/facegate/turbojpeg-android \
+              -GNinja \
+              -B "$BUILD"
+            cmake --build "$BUILD" -j$(nproc)
+          done
+
+      - name: Package Magisk module ZIP
+        run: |
+          PKG="facegate/magisk-pkg"
+          mkdir -p "$PKG/zygisk" "$PKG/system/lib64" "$PKG/system/lib"
+          cp facegate/zygisk-module/module.prop  "$PKG/"
+          cp facegate/zygisk-module/service.sh   "$PKG/"
+          cp facegate/zygisk-module/customize.sh "$PKG/"
+
+          # Zygisk naming convention: <ABI>.so
+          # Only copy ABIs that were actually built (x86_64 skipped if ShadowHook
+          # was absent).
+          for ABI in arm64-v8a armeabi-v7a x86_64; do
+            SO="facegate/zygisk-build-$ABI/libhookProxy.so"
+            if [ -f "$SO" ]; then
+              cp "$SO" "$PKG/zygisk/$ABI.so"
+              echo "Zygisk: added $ABI.so"
+            fi
+          done
+
+          # System overlay — libhookProxy.so loaded via wrap.cameraserver LD_PRELOAD.
+          # arm64-v8a is required; armeabi-v7a is needed for 32-bit processes.
+          cp facegate/zygisk-build-arm64-v8a/libhookProxy.so   "$PKG/system/lib64/libhookProxy.so"
+          cp facegate/zygisk-build-armeabi-v7a/libhookProxy.so "$PKG/system/lib/libhookProxy.so"
+
+          # FIX: copy libshadowhook.so into the system overlay when the AAR ships
+          # a shared library.  Without this, cameraserver crashes with
+          # "library not found: libshadowhook.so" because libhookProxy.so has a
+          # DT_NEEDED for it but nothing places the .so on the system partition.
+          # When the AAR is static-only these blocks are no-ops.
+          SH64="facegate/shadowhook-android/arm64-v8a/libshadowhook.so"
+          SH32="facegate/shadowhook-android/armeabi-v7a/libshadowhook.so"
+          SHX64="facegate/shadowhook-android/x86_64/libshadowhook.so"
+          [ -f "$SH64"  ] && cp "$SH64"  "$PKG/system/lib64/libshadowhook.so"  && echo "Bundled libshadowhook.so (arm64-v8a)"
+          [ -f "$SH32"  ] && cp "$SH32"  "$PKG/system/lib/libshadowhook.so"    && echo "Bundled libshadowhook.so (armeabi-v7a)"
+          # x86_64: keep filename libshadowhook.so so DT_NEEDED is satisfied;
+          # only arm64-v8a was already copied above — overwrite only if x86_64 build ran.
+          [ -f "$SHX64" ] && cp "$SHX64" "$PKG/system/lib64/libshadowhook.so"  && echo "Bundled libshadowhook.so (x86_64)"
+
+          cd "$PKG" && zip -r "$GITHUB_WORKSPACE/facegate/FaceGate-Module.zip" . && cd -
+          echo "Module ZIP: $(du -sh $GITHUB_WORKSPACE/facegate/FaceGate-Module.zip)"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: FaceGate-APK
+          path: facegate/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 14
+
+      - name: Upload Zygisk module ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: FaceGate-Magisk-Module
+          path: facegate/FaceGate-Module.zip
+          retention-days: 14
