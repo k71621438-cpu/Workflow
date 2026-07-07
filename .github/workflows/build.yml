@@ -192,7 +192,7 @@ jobs:
               -DENABLE_SHARED=OFF -DENABLE_STATIC=ON -DWITH_TURBOJPEG=ON \
               -GNinja \
               -B turbojpeg-build-$ABI
-            cmake --build turbojpeg-build-$ABI --target turbojpeg -j$(nproc)
+            cmake --build turbojpeg-build-$ABI --target turbojpeg-static -j$(nproc)
             mkdir -p "$TJ_OUT/$ABI"
             cp turbojpeg-build-$ABI/libturbojpeg.a "$TJ_OUT/$ABI/"
           }
