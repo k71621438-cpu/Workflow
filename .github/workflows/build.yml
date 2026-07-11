@@ -364,7 +364,7 @@ jobs:
           cp facegate/zygisk-module/module.prop  "$PKG/"
           cp facegate/zygisk-module/service.sh   "$PKG/"
           cp facegate/zygisk-module/customize.sh "$PKG/"
-
+          cp facegate/zygisk-module/sepolicy.rule "$PKG/"
           # Zygisk naming convention: <ABI>.so
           # Only copy ABIs that were actually built (x86_64 skipped if ShadowHook
           # was absent).
