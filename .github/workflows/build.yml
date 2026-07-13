@@ -128,6 +128,7 @@ jobs:
               -B libyuv-build-$ABI
             cmake --build libyuv-build-$ABI --target yuv -j$(nproc)
             mkdir -p $LIBYUV_OUT/$ABI
+            # FIX: Explicitly copy libyuv.a (not yuv.lib which is Windows-only)
             cp libyuv-build-$ABI/libyuv.a $LIBYUV_OUT/$ABI/
           }
           build_libyuv "arm64-v8a"
@@ -147,8 +148,6 @@ jobs:
           mkdir -p $SH_OUT/include
 
           # Headers: prefab first, fall back to the committed header in this repo.
-          # zygisk-module/jni/include/shadowhook.h is committed here alongside the
-          # workflow so the fallback always works even when the AAR has no prefab.
           if ls shadowhook-aar/prefab/modules/shadowhook/include/*.h 2>/dev/null | grep -q .; then
             cp shadowhook-aar/prefab/modules/shadowhook/include/*.h "$SH_OUT/include/"
             echo "ShadowHook headers: from AAR prefab"
@@ -157,8 +156,6 @@ jobs:
             echo "ShadowHook headers: from committed fallback"
           fi
 
-          # Extract libraries — ShadowHook 2.x may only ship arm64-v8a and
-          # armeabi-v7a; x86_64 is often absent.  Log a warning and continue.
           for ABI in arm64-v8a armeabi-v7a x86_64; do
             mkdir -p "$SH_OUT/$ABI"
             STATIC="shadowhook-aar/prefab/modules/shadowhook/libs/android.$ABI/libshadowhook.a"
@@ -173,6 +170,8 @@ jobs:
           done
 
       # ── libjpeg-turbo 3.0.2 ─────────────────────────────────────────────────
+      # FIX: Changed target from turbojpeg-static to turbojpeg
+      # When ENABLE_SHARED=OFF, the static target is just "turbojpeg"
       - name: Build libjpeg-turbo for Android
         run: |
           git clone --depth 1 --branch 3.0.2 \
@@ -192,7 +191,8 @@ jobs:
               -DENABLE_SHARED=OFF -DENABLE_STATIC=ON -DWITH_TURBOJPEG=ON \
               -GNinja \
               -B turbojpeg-build-$ABI
-            cmake --build turbojpeg-build-$ABI --target turbojpeg-static -j$(nproc)
+            # FIX: Use "turbojpeg" target (not "turbojpeg-static") when ENABLE_SHARED=OFF
+            cmake --build turbojpeg-build-$ABI --target turbojpeg -j$(nproc)
             mkdir -p "$TJ_OUT/$ABI"
             cp turbojpeg-build-$ABI/libturbojpeg.a "$TJ_OUT/$ABI/"
           }
@@ -238,17 +238,16 @@ jobs:
 
   # ───────────────────────────────────────────────────────────────────────────
   # Job 2 — Build APK (itsme4) + Zygisk Magisk module ZIP
-  # The itsme4 app source is checked out into facegate/ using APP_REPO_PAT.
   # ───────────────────────────────────────────────────────────────────────────
   build-apk-and-module:
     name: APK + Zygisk Module  (facegate/)
     needs: build-native-libs
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout itsme4 into facegate/
+      - name: Checkout itsme5 into facegate/
         uses: actions/checkout@v4
         with:
-          repository: Amkushu999/itsme4
+          repository: Amkushu999/itsme5
           token: ${{ secrets.APP_REPO_PAT }}
           path: facegate
 
@@ -321,21 +320,15 @@ jobs:
         working-directory: facegate
         run: chmod +x ./gradlew
 
-      - name: Build Debug APK
-        working-directory: facegate
-        run: ./gradlew assembleDebug --stacktrace
-
       - name: Install CMake + Ninja
         run: sudo apt-get install -y cmake ninja-build
 
+      # FIX: Updated CMakeLists.txt must be in zygisk-module/jni/ before this step
       - name: Build hookProxy.so (Zygisk module — all ABIs)
         run: |
           for ABI in arm64-v8a armeabi-v7a x86_64; do
             echo "=== Building hookProxy.so for $ABI ==="
 
-            # ShadowHook 2.x may not ship x86_64 in its AAR.
-            # CMakeLists.txt uses FATAL_ERROR when the lib is missing, so skip
-            # the ABI rather than fail the whole job.
             SH_DIR="facegate/shadowhook-android/$ABI"
             if [ ! -f "$SH_DIR/libshadowhook.a" ] && [ ! -f "$SH_DIR/libshadowhook.so" ]; then
               echo "SKIP $ABI — ShadowHook not present in AAR for this ABI"
@@ -357,7 +350,40 @@ jobs:
             cmake --build "$BUILD" -j$(nproc)
           done
 
-      - name: Package Magisk module ZIP
+      - name: Package module assets into APK
+        run: |
+          ASSETS="facegate/app/src/main/assets"
+          mkdir -p "$ASSETS/system/lib64" "$ASSETS/system/lib" "$ASSETS/zygisk"
+
+          cp facegate/zygisk-module/module.prop   "$ASSETS/module.prop"
+          cp facegate/zygisk-module/service.sh    "$ASSETS/service.sh"
+          cp facegate/zygisk-module/post-fs-data.sh "$ASSETS/post-fs-data.sh"
+          cp facegate/zygisk-module/sepolicy.rule  "$ASSETS/sepolicy.rule"
+
+          for ABI in arm64-v8a armeabi-v7a x86_64; do
+            SO="facegate/zygisk-build-$ABI/libhookProxy.so"
+            if [ -f "$SO" ]; then
+              cp "$SO" "$ASSETS/zygisk/$ABI.so"
+              echo "Asset: zygisk/$ABI.so"
+            fi
+          done
+
+          cp facegate/zygisk-build-arm64-v8a/libhookProxy.so   "$ASSETS/system/lib64/libhookProxy.so"
+          cp facegate/zygisk-build-armeabi-v7a/libhookProxy.so "$ASSETS/system/lib/libhookProxy.so"
+
+          SH64="facegate/shadowhook-android/arm64-v8a/libshadowhook.so"
+          SH32="facegate/shadowhook-android/armeabi-v7a/libshadowhook.so"
+          [ -f "$SH64" ] && cp "$SH64" "$ASSETS/system/lib64/libshadowhook.so"
+          [ -f "$SH32" ] && cp "$SH32" "$ASSETS/system/lib/libshadowhook.so"
+
+          echo "=== Module assets packaged ==="
+          find "$ASSETS" -type f | sort
+
+      - name: Build Debug APK
+        working-directory: facegate
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Package Magisk module ZIP (standalone)
         run: |
           PKG="facegate/magisk-pkg"
           mkdir -p "$PKG/zygisk" "$PKG/system/lib64" "$PKG/system/lib"
@@ -365,9 +391,7 @@ jobs:
           cp facegate/zygisk-module/service.sh   "$PKG/"
           cp facegate/zygisk-module/customize.sh "$PKG/"
           cp facegate/zygisk-module/sepolicy.rule "$PKG/"
-          # Zygisk naming convention: <ABI>.so
-          # Only copy ABIs that were actually built (x86_64 skipped if ShadowHook
-          # was absent).
+
           for ABI in arm64-v8a armeabi-v7a x86_64; do
             SO="facegate/zygisk-build-$ABI/libhookProxy.so"
             if [ -f "$SO" ]; then
@@ -376,23 +400,14 @@ jobs:
             fi
           done
 
-          # System overlay — libhookProxy.so loaded via wrap.cameraserver LD_PRELOAD.
-          # arm64-v8a is required; armeabi-v7a is needed for 32-bit processes.
           cp facegate/zygisk-build-arm64-v8a/libhookProxy.so   "$PKG/system/lib64/libhookProxy.so"
           cp facegate/zygisk-build-armeabi-v7a/libhookProxy.so "$PKG/system/lib/libhookProxy.so"
 
-          # FIX: copy libshadowhook.so into the system overlay when the AAR ships
-          # a shared library.  Without this, cameraserver crashes with
-          # "library not found: libshadowhook.so" because libhookProxy.so has a
-          # DT_NEEDED for it but nothing places the .so on the system partition.
-          # When the AAR is static-only these blocks are no-ops.
           SH64="facegate/shadowhook-android/arm64-v8a/libshadowhook.so"
           SH32="facegate/shadowhook-android/armeabi-v7a/libshadowhook.so"
           SHX64="facegate/shadowhook-android/x86_64/libshadowhook.so"
           [ -f "$SH64"  ] && cp "$SH64"  "$PKG/system/lib64/libshadowhook.so"  && echo "Bundled libshadowhook.so (arm64-v8a)"
           [ -f "$SH32"  ] && cp "$SH32"  "$PKG/system/lib/libshadowhook.so"    && echo "Bundled libshadowhook.so (armeabi-v7a)"
-          # x86_64: keep filename libshadowhook.so so DT_NEEDED is satisfied;
-          # only arm64-v8a was already copied above — overwrite only if x86_64 build ran.
           [ -f "$SHX64" ] && cp "$SHX64" "$PKG/system/lib64/libshadowhook.so"  && echo "Bundled libshadowhook.so (x86_64)"
 
           cd "$PKG" && zip -r "$GITHUB_WORKSPACE/facegate/FaceGate-Module.zip" . && cd -
