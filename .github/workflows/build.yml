@@ -128,7 +128,6 @@ jobs:
               -B libyuv-build-$ABI
             cmake --build libyuv-build-$ABI --target yuv -j$(nproc)
             mkdir -p $LIBYUV_OUT/$ABI
-            # FIX: Explicitly copy libyuv.a (not yuv.lib which is Windows-only)
             cp libyuv-build-$ABI/libyuv.a $LIBYUV_OUT/$ABI/
           }
           build_libyuv "arm64-v8a"
@@ -147,7 +146,6 @@ jobs:
           SH_OUT=$GITHUB_WORKSPACE/shadowhook-prebuilt
           mkdir -p $SH_OUT/include
 
-          # Headers: prefab first, fall back to the committed header in this repo.
           if ls shadowhook-aar/prefab/modules/shadowhook/include/*.h 2>/dev/null | grep -q .; then
             cp shadowhook-aar/prefab/modules/shadowhook/include/*.h "$SH_OUT/include/"
             echo "ShadowHook headers: from AAR prefab"
@@ -170,8 +168,8 @@ jobs:
           done
 
       # ── libjpeg-turbo 3.0.2 ─────────────────────────────────────────────────
-      # FIX: Changed target from turbojpeg-static to turbojpeg
-      # When ENABLE_SHARED=OFF, the static target is just "turbojpeg"
+      # CORRECT: Target is turbojpeg-static when ENABLE_STATIC=ON.
+      # Output file is libturbojpeg.a (OUTPUT_NAME turbojpeg strips -static suffix).
       - name: Build libjpeg-turbo for Android
         run: |
           git clone --depth 1 --branch 3.0.2 \
@@ -188,12 +186,15 @@ jobs:
               -DANDROID_PLATFORM=android-24 \
               -DCMAKE_TOOLCHAIN_FILE=$NDK/build/cmake/android.toolchain.cmake \
               -DCMAKE_BUILD_TYPE=MinSizeRel \
-              -DENABLE_SHARED=OFF -DENABLE_STATIC=ON -DWITH_TURBOJPEG=ON \
+              -DENABLE_SHARED=OFF \
+              -DENABLE_STATIC=ON \
+              -DWITH_TURBOJPEG=ON \
               -GNinja \
               -B turbojpeg-build-$ABI
-            # FIX: Use "turbojpeg" target (not "turbojpeg-static") when ENABLE_SHARED=OFF
-            cmake --build turbojpeg-build-$ABI --target turbojpeg -j$(nproc)
+            # CORRECT target: turbojpeg-static (your original was right!)
+            cmake --build turbojpeg-build-$ABI --target turbojpeg-static -j$(nproc)
             mkdir -p "$TJ_OUT/$ABI"
+            # Output is libturbojpeg.a (not libturbojpeg-static.a)
             cp turbojpeg-build-$ABI/libturbojpeg.a "$TJ_OUT/$ABI/"
           }
           build_tj "arm64-v8a"
@@ -237,7 +238,7 @@ jobs:
           retention-days: 14
 
   # ───────────────────────────────────────────────────────────────────────────
-  # Job 2 — Build APK (itsme4) + Zygisk Magisk module ZIP
+  # Job 2 — Build APK (itsme5) + Zygisk Magisk module ZIP
   # ───────────────────────────────────────────────────────────────────────────
   build-apk-and-module:
     name: APK + Zygisk Module  (facegate/)
@@ -323,7 +324,6 @@ jobs:
       - name: Install CMake + Ninja
         run: sudo apt-get install -y cmake ninja-build
 
-      # FIX: Updated CMakeLists.txt must be in zygisk-module/jni/ before this step
       - name: Build hookProxy.so (Zygisk module — all ABIs)
         run: |
           for ABI in arm64-v8a armeabi-v7a x86_64; do
