@@ -1,4 +1,4 @@
-name: Build FaceGate (FFmpeg + libyuv + ShadowHook + APK + Zygisk Module)
+name: Build FaceGate (FFmpeg + libyuv + ShadowHook-static + APK + Magisk Module)
 
 on:
   workflow_dispatch:
@@ -10,7 +10,7 @@ jobs:
   # Job 1 — Build all native C/C++ libraries for Android
   # ───────────────────────────────────────────────────────────────────────────
   build-native-libs:
-    name: Native Libs (FFmpeg · libyuv · ShadowHook · turbojpeg)
+    name: Native Libs (FFmpeg · libyuv · ShadowHook-static · turbojpeg)
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -134,42 +134,61 @@ jobs:
           build_libyuv "armeabi-v7a"
           build_libyuv "x86_64"
 
-      # ── ShadowHook 2.0.1 — ByteDance, from Maven Central AAR ────────────────
-      - name: Extract ShadowHook from Maven Central AAR
+      # ── ShadowHook — build from source as STATIC library ────────────────────
+      # IMPORTANT: The Maven Central AAR (shadowhook-2.0.1.aar) only contains
+      # .so (shared) files in both prefab/ and jni/ — there is NO .a anywhere
+      # in the AAR. We must build from source with SHARED→STATIC patch.
+      # ShadowHook only supports armeabi-v7a and arm64-v8a (no x86_64 support).
+      - name: Build ShadowHook from source (static, arm64+armv7 only)
         run: |
-          wget -q \
-            "https://repo1.maven.org/maven2/com/bytedance/android/shadowhook/2.0.1/shadowhook-2.0.1.aar" \
-            -O shadowhook.zip
-          mkdir -p shadowhook-aar
-          unzip -q shadowhook.zip -d shadowhook-aar
+          git clone --depth 1 https://github.com/bytedance/android-inline-hook.git shadowhook-src
 
           SH_OUT=$GITHUB_WORKSPACE/shadowhook-prebuilt
           mkdir -p $SH_OUT/include
 
-          if ls shadowhook-aar/prefab/modules/shadowhook/include/*.h 2>/dev/null | grep -q .; then
-            cp shadowhook-aar/prefab/modules/shadowhook/include/*.h "$SH_OUT/include/"
-            echo "ShadowHook headers: from AAR prefab"
-          else
-            cp "$GITHUB_WORKSPACE/zygisk-module/jni/include/shadowhook.h" "$SH_OUT/include/"
-            echo "ShadowHook headers: from committed fallback"
-          fi
+          # Copy public header
+          cp shadowhook-src/shadowhook/include/shadowhook.h "$SH_OUT/include/"
 
-          for ABI in arm64-v8a armeabi-v7a x86_64; do
-            mkdir -p "$SH_OUT/$ABI"
-            STATIC="shadowhook-aar/prefab/modules/shadowhook/libs/android.$ABI/libshadowhook.a"
-            SHARED="shadowhook-aar/jni/$ABI/libshadowhook.so"
-            if [ -f "$STATIC" ]; then
-              cp "$STATIC" "$SH_OUT/$ABI/" && echo "ShadowHook $ABI: static"
-            elif [ -f "$SHARED" ]; then
-              cp "$SHARED" "$SH_OUT/$ABI/" && echo "ShadowHook $ABI: shared"
-            else
-              echo "WARNING: ShadowHook $ABI not found in AAR — this ABI will be skipped"
+          # Patch CMakeLists.txt: SHARED → STATIC so cmake produces libshadowhook.a
+          SHADOWHOOK_CMAKE="shadowhook-src/shadowhook/CMakeLists.txt"
+          sed -i 's/add_library(shadowhook SHARED/add_library(shadowhook STATIC/g'         "$SHADOWHOOK_CMAKE"
+          sed -i 's/add_library(shadowhook_nothing SHARED/add_library(shadowhook_nothing STATIC/g' "$SHADOWHOOK_CMAKE"
+          echo "=== Patched CMakeLists.txt ==="
+          grep "add_library" "$SHADOWHOOK_CMAKE" | head -5
+
+          build_shadowhook() {
+            local ABI=$1
+            mkdir -p shadowhook-build-$ABI "$SH_OUT/$ABI"
+            cmake shadowhook-src/shadowhook \
+              -DANDROID_ABI=$ABI \
+              -DANDROID_PLATFORM=android-21 \
+              -DCMAKE_TOOLCHAIN_FILE=$NDK/build/cmake/android.toolchain.cmake \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DBUILD_SHARED_LIBS=OFF \
+              -GNinja \
+              -B shadowhook-build-$ABI
+            cmake --build shadowhook-build-$ABI -j$(nproc)
+            # Find and copy the static archive (name may vary by cmake/version)
+            STATIC_LIB=$(find shadowhook-build-$ABI -name "libshadowhook*.a" | head -1)
+            if [ -z "$STATIC_LIB" ]; then
+              echo "FATAL: libshadowhook*.a not found for $ABI after build"
+              find shadowhook-build-$ABI -type f | sort
+              exit 1
             fi
-          done
+            cp "$STATIC_LIB" "$SH_OUT/$ABI/libshadowhook.a"
+            echo "ShadowHook $ABI: static OK — $(file $SH_OUT/$ABI/libshadowhook.a)"
+          }
+
+          # Only build for supported ABIs (ShadowHook: arm64-v8a and armeabi-v7a only)
+          build_shadowhook "arm64-v8a"
+          build_shadowhook "armeabi-v7a"
+          # x86_64 intentionally skipped — ShadowHook does not support x86_64.
+          # hookProxy.so is also not built for x86_64 (see Job 2).
+
+          echo "=== ShadowHook prebuilt ==="
+          find "$SH_OUT" -type f | sort
 
       # ── libjpeg-turbo 3.0.2 ─────────────────────────────────────────────────
-      # CORRECT: Target is turbojpeg-static when ENABLE_STATIC=ON.
-      # Output file is libturbojpeg.a (OUTPUT_NAME turbojpeg strips -static suffix).
       - name: Build libjpeg-turbo for Android
         run: |
           git clone --depth 1 --branch 3.0.2 \
@@ -191,10 +210,8 @@ jobs:
               -DWITH_TURBOJPEG=ON \
               -GNinja \
               -B turbojpeg-build-$ABI
-            # CORRECT target: turbojpeg-static (your original was right!)
             cmake --build turbojpeg-build-$ABI --target turbojpeg-static -j$(nproc)
             mkdir -p "$TJ_OUT/$ABI"
-            # Output is libturbojpeg.a (not libturbojpeg-static.a)
             cp turbojpeg-build-$ABI/libturbojpeg.a "$TJ_OUT/$ABI/"
           }
           build_tj "arm64-v8a"
@@ -238,10 +255,10 @@ jobs:
           retention-days: 14
 
   # ───────────────────────────────────────────────────────────────────────────
-  # Job 2 — Build APK (itsme5) + Zygisk Magisk module ZIP
+  # Job 2 — Build APK (itsme5) + Magisk module ZIP (no Zygisk)
   # ───────────────────────────────────────────────────────────────────────────
   build-apk-and-module:
-    name: APK + Zygisk Module  (facegate/)
+    name: APK + Magisk Module  (facegate/)
     needs: build-native-libs
     runs-on: ubuntu-latest
     steps:
@@ -324,15 +341,19 @@ jobs:
       - name: Install CMake + Ninja
         run: sudo apt-get install -y cmake ninja-build
 
-      - name: Build hookProxy.so (Zygisk module — all ABIs)
+      # ── Build hookProxy.so ──────────────────────────────────────────────────
+      # Only arm64-v8a and armeabi-v7a: ShadowHook does not support x86_64,
+      # and the CMakeLists.txt now FATAL_ERRORs if libshadowhook.a is missing.
+      - name: Build hookProxy.so (arm64-v8a + armeabi-v7a)
         run: |
-          for ABI in arm64-v8a armeabi-v7a x86_64; do
+          for ABI in arm64-v8a armeabi-v7a; do
             echo "=== Building hookProxy.so for $ABI ==="
 
-            SH_DIR="facegate/shadowhook-android/$ABI"
-            if [ ! -f "$SH_DIR/libshadowhook.a" ] && [ ! -f "$SH_DIR/libshadowhook.so" ]; then
-              echo "SKIP $ABI — ShadowHook not present in AAR for this ABI"
-              continue
+            SH_A="facegate/shadowhook-android/$ABI/libshadowhook.a"
+            if [ ! -f "$SH_A" ]; then
+              echo "FATAL: libshadowhook.a not found for $ABI at $SH_A"
+              echo "ShadowHook build in Job 1 should have produced this file."
+              exit 1
             fi
 
             BUILD="facegate/zygisk-build-$ABI"
@@ -348,68 +369,107 @@ jobs:
               -GNinja \
               -B "$BUILD"
             cmake --build "$BUILD" -j$(nproc)
+            echo "=== hookProxy.so for $ABI: $(ls -lh $BUILD/libhookProxy.so) ==="
           done
 
-      - name: Build amkush_injector (ptrace injection binary — AndKittyInjector)
+      # ── Build amkush_injector (AndKittyInjector + --pid patch) ─────────────
+      # Clone fresh from upstream, apply the --pid patch, then ndk-build.
+      # This avoids vendoring the full AndKittyInjector source tree in itsme5.
+      - name: Build amkush_injector (ptrace injection binary — --pid patched)
         run: |
-          NDK_BUILD="$NDK/ndk-build"
-          INJ_SRC="facegate/zygisk-module/injector/AndKittyInjector"
-          if [ ! -f "$NDK_BUILD" ]; then
-            echo "ERROR: ndk-build not found at $NDK_BUILD"
-            exit 1
-          fi
-          if [ ! -d "$INJ_SRC" ]; then
-            echo "ERROR: injector sources missing at $INJ_SRC"
+          if [ ! -f "$NDK/ndk-build" ]; then
+            echo "ERROR: ndk-build not found at $NDK/ndk-build"
             exit 1
           fi
 
-          "$NDK_BUILD" -C "$INJ_SRC" \
+          echo "=== Cloning AndKittyInjector (upstream) ==="
+          git clone --recursive --depth 1 \
+            https://github.com/MJx0/AndKittyInjector.git AndKittyInjector-src
+
+          echo "=== Applying --pid patch ==="
+          python3 facegate/patches/apply_andkitty_pid.py \
+            AndKittyInjector-src/AndKittyInjector/src/main.cpp
+
+          echo "=== Building (arm64-v8a + armeabi-v7a only) ==="
+          # Patch Application.mk to limit to supported ABIs for this project
+          sed -i 's/APP_ABI.*:=.*/APP_ABI := arm64-v8a armeabi-v7a/' \
+            AndKittyInjector-src/AndKittyInjector/Application.mk
+          cat AndKittyInjector-src/AndKittyInjector/Application.mk
+
+          "$NDK/ndk-build" -C AndKittyInjector-src/AndKittyInjector \
             NDK_PROJECT_PATH=. \
             APP_BUILD_SCRIPT=Android.mk \
             NDK_APPLICATION_MK=Application.mk \
             -j$(nproc)
 
-          OUT="$INJ_SRC/libs"
+          OUT="AndKittyInjector-src/AndKittyInjector/libs"
           echo "=== amkush_injector build output ==="
           find "$OUT" -type f | sort
 
           mkdir -p facegate/zygisk-module/injector-out
-          [ -f "$OUT/arm64-v8a/AndKittyInjector" ]   && cp "$OUT/arm64-v8a/AndKittyInjector"   facegate/zygisk-module/injector-out/amkush_injector64
-          [ -f "$OUT/armeabi-v7a/AndKittyInjector" ] && cp "$OUT/armeabi-v7a/AndKittyInjector" facegate/zygisk-module/injector-out/amkush_injector32
+          [ -f "$OUT/arm64-v8a/AndKittyInjector" ]   && \
+            cp "$OUT/arm64-v8a/AndKittyInjector"   facegate/zygisk-module/injector-out/amkush_injector64
+          [ -f "$OUT/armeabi-v7a/AndKittyInjector" ] && \
+            cp "$OUT/armeabi-v7a/AndKittyInjector" facegate/zygisk-module/injector-out/amkush_injector32
 
           echo "=== injector-out ==="
           ls -la facegate/zygisk-module/injector-out
 
+      # ── Build watchdog_daemon ────────────────────────────────────────────────
+      # Native C daemon that monitors cameraserver and re-injects if the hook
+      # disappears (e.g. after a cameraserver crash/restart).
+      - name: Build watchdog_daemon (arm64 + armv7)
+        run: |
+          TOOLCHAIN=$NDK/toolchains/llvm/prebuilt/linux-x86_64
+          WD_OUT="facegate/zygisk-module/injector-out"
+          mkdir -p "$WD_OUT"
+
+          build_watchdog() {
+            local ABI=$1 TARGET=$2 API=21
+            local CC=$TOOLCHAIN/bin/${TARGET}${API}-clang
+            local OUT="$WD_OUT/watchdog_daemon_${ABI//-/_}"
+            $CC -O2 -pie -fPIE \
+              facegate/zygisk-module/injector/watchdog_daemon.c \
+              -o "$OUT" \
+              -llog
+            echo "watchdog_daemon $ABI: $(file $OUT)"
+          }
+
+          build_watchdog "arm64-v8a"   "aarch64-linux-android"
+          build_watchdog "armeabi-v7a" "armv7a-linux-androideabi"
+
+          echo "=== watchdog binaries ==="
+          ls -la "$WD_OUT"/watchdog_daemon_*
+
+      # ── Package module assets into APK ────────────────────────────────────
+      # No Zygisk assets. ShadowHook is statically linked into libhookProxy.so
+      # so no libshadowhook.so is bundled.
       - name: Package module assets into APK
         run: |
           ASSETS="facegate/app/src/main/assets"
-          mkdir -p "$ASSETS/system/lib64" "$ASSETS/system/lib" "$ASSETS/system/bin" "$ASSETS/zygisk"
+          mkdir -p "$ASSETS/system/lib64" "$ASSETS/system/lib" "$ASSETS/system/bin"
 
-          cp facegate/zygisk-module/module.prop   "$ASSETS/module.prop"
-          cp facegate/zygisk-module/service.sh    "$ASSETS/service.sh"
-          cp facegate/zygisk-module/post-fs-data.sh "$ASSETS/post-fs-data.sh"
-          cp facegate/zygisk-module/sepolicy.rule  "$ASSETS/sepolicy.rule"
+          # Module metadata + scripts
+          cp facegate/zygisk-module/module.prop      "$ASSETS/module.prop"
+          cp facegate/zygisk-module/service.sh       "$ASSETS/service.sh"
+          cp facegate/zygisk-module/post-fs-data.sh  "$ASSETS/post-fs-data.sh"
+          cp facegate/zygisk-module/sepolicy.rule    "$ASSETS/sepolicy.rule"
 
-          for ABI in arm64-v8a armeabi-v7a x86_64; do
-            SO="facegate/zygisk-build-$ABI/libhookProxy.so"
-            if [ -f "$SO" ]; then
-              cp "$SO" "$ASSETS/zygisk/$ABI.so"
-              echo "Asset: zygisk/$ABI.so"
-            fi
-          done
-
+          # Injection payload (statically linked — no external .so deps)
           cp facegate/zygisk-build-arm64-v8a/libhookProxy.so   "$ASSETS/system/lib64/libhookProxy.so"
           cp facegate/zygisk-build-armeabi-v7a/libhookProxy.so "$ASSETS/system/lib/libhookProxy.so"
 
-          SH64="facegate/shadowhook-android/arm64-v8a/libshadowhook.so"
-          SH32="facegate/shadowhook-android/armeabi-v7a/libshadowhook.so"
-          [ -f "$SH64" ] && cp "$SH64" "$ASSETS/system/lib64/libshadowhook.so"
-          [ -f "$SH32" ] && cp "$SH32" "$ASSETS/system/lib/libshadowhook.so"
-
+          # Injector binaries (amkush_injector, AndKittyInjector --pid patched)
           INJ64="facegate/zygisk-module/injector-out/amkush_injector64"
           INJ32="facegate/zygisk-module/injector-out/amkush_injector32"
           [ -f "$INJ64" ] && cp "$INJ64" "$ASSETS/system/bin/amkush_injector64" && chmod 0755 "$ASSETS/system/bin/amkush_injector64"
           [ -f "$INJ32" ] && cp "$INJ32" "$ASSETS/system/bin/amkush_injector32" && chmod 0755 "$ASSETS/system/bin/amkush_injector32"
+
+          # Watchdog daemon binaries
+          WD64="facegate/zygisk-module/injector-out/watchdog_daemon_arm64_v8a"
+          WD32="facegate/zygisk-module/injector-out/watchdog_daemon_armeabi_v7a"
+          [ -f "$WD64" ] && cp "$WD64" "$ASSETS/system/bin/watchdog_daemon64" && chmod 0755 "$ASSETS/system/bin/watchdog_daemon64"
+          [ -f "$WD32" ] && cp "$WD32" "$ASSETS/system/bin/watchdog_daemon32" && chmod 0755 "$ASSETS/system/bin/watchdog_daemon32"
 
           echo "=== Module assets packaged ==="
           find "$ASSETS" -type f | sort
@@ -418,40 +478,39 @@ jobs:
         working-directory: facegate
         run: ./gradlew assembleDebug --stacktrace
 
-      - name: Package Magisk module ZIP (standalone)
+      # ── Package Magisk module ZIP ─────────────────────────────────────────
+      # No zygisk/ directory — this module is ptrace-injection-only.
+      # ShadowHook is statically linked; no shared libshadowhook.so to bundle.
+      - name: Package Magisk module ZIP (ptrace-injection, no Zygisk)
         run: |
           PKG="facegate/magisk-pkg"
-          mkdir -p "$PKG/zygisk" "$PKG/system/lib64" "$PKG/system/lib" "$PKG/system/bin"
-          cp facegate/zygisk-module/module.prop  "$PKG/"
-          cp facegate/zygisk-module/service.sh   "$PKG/"
-          cp facegate/zygisk-module/customize.sh "$PKG/"
-          cp facegate/zygisk-module/sepolicy.rule "$PKG/"
+          mkdir -p "$PKG/system/lib64" "$PKG/system/lib" "$PKG/system/bin"
 
-          for ABI in arm64-v8a armeabi-v7a x86_64; do
-            SO="facegate/zygisk-build-$ABI/libhookProxy.so"
-            if [ -f "$SO" ]; then
-              cp "$SO" "$PKG/zygisk/$ABI.so"
-              echo "Zygisk: added $ABI.so"
-            fi
-          done
+          cp facegate/zygisk-module/module.prop    "$PKG/"
+          cp facegate/zygisk-module/service.sh     "$PKG/"
+          cp facegate/zygisk-module/customize.sh   "$PKG/"
+          cp facegate/zygisk-module/sepolicy.rule  "$PKG/"
 
+          # Injection payload
           cp facegate/zygisk-build-arm64-v8a/libhookProxy.so   "$PKG/system/lib64/libhookProxy.so"
           cp facegate/zygisk-build-armeabi-v7a/libhookProxy.so "$PKG/system/lib/libhookProxy.so"
 
-          SH64="facegate/shadowhook-android/arm64-v8a/libshadowhook.so"
-          SH32="facegate/shadowhook-android/armeabi-v7a/libshadowhook.so"
-          SHX64="facegate/shadowhook-android/x86_64/libshadowhook.so"
-          [ -f "$SH64"  ] && cp "$SH64"  "$PKG/system/lib64/libshadowhook.so"  && echo "Bundled libshadowhook.so (arm64-v8a)"
-          [ -f "$SH32"  ] && cp "$SH32"  "$PKG/system/lib/libshadowhook.so"    && echo "Bundled libshadowhook.so (armeabi-v7a)"
-          [ -f "$SHX64" ] && cp "$SHX64" "$PKG/system/lib64/libshadowhook.so"  && echo "Bundled libshadowhook.so (x86_64)"
-
+          # Injector binaries
           INJ64="facegate/zygisk-module/injector-out/amkush_injector64"
           INJ32="facegate/zygisk-module/injector-out/amkush_injector32"
           [ -f "$INJ64" ] && cp "$INJ64" "$PKG/system/bin/amkush_injector64" && chmod 0755 "$PKG/system/bin/amkush_injector64" && echo "Bundled amkush_injector64"
           [ -f "$INJ32" ] && cp "$INJ32" "$PKG/system/bin/amkush_injector32" && chmod 0755 "$PKG/system/bin/amkush_injector32" && echo "Bundled amkush_injector32"
 
+          # Watchdog daemon binaries
+          WD64="facegate/zygisk-module/injector-out/watchdog_daemon_arm64_v8a"
+          WD32="facegate/zygisk-module/injector-out/watchdog_daemon_armeabi_v7a"
+          [ -f "$WD64" ] && cp "$WD64" "$PKG/system/bin/watchdog_daemon64" && chmod 0755 "$PKG/system/bin/watchdog_daemon64" && echo "Bundled watchdog_daemon64"
+          [ -f "$WD32" ] && cp "$WD32" "$PKG/system/bin/watchdog_daemon32" && chmod 0755 "$PKG/system/bin/watchdog_daemon32" && echo "Bundled watchdog_daemon32"
+
           cd "$PKG" && zip -r "$GITHUB_WORKSPACE/facegate/FaceGate-Module.zip" . && cd -
           echo "Module ZIP: $(du -sh $GITHUB_WORKSPACE/facegate/FaceGate-Module.zip)"
+          echo "=== Module contents ==="
+          unzip -l "$GITHUB_WORKSPACE/facegate/FaceGate-Module.zip"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
@@ -460,7 +519,7 @@ jobs:
           path: facegate/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 14
 
-      - name: Upload Zygisk module ZIP
+      - name: Upload Magisk module ZIP
         uses: actions/upload-artifact@v4
         with:
           name: FaceGate-Magisk-Module
