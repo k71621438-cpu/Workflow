@@ -350,10 +350,40 @@ jobs:
             cmake --build "$BUILD" -j$(nproc)
           done
 
+      - name: Build amkush_injector (ptrace injection binary — AndKittyInjector)
+        run: |
+          NDK_BUILD="$NDK/ndk-build"
+          INJ_SRC="facegate/zygisk-module/injector/AndKittyInjector"
+          if [ ! -f "$NDK_BUILD" ]; then
+            echo "ERROR: ndk-build not found at $NDK_BUILD"
+            exit 1
+          fi
+          if [ ! -d "$INJ_SRC" ]; then
+            echo "ERROR: injector sources missing at $INJ_SRC"
+            exit 1
+          fi
+
+          "$NDK_BUILD" -C "$INJ_SRC" \
+            NDK_PROJECT_PATH=. \
+            APP_BUILD_SCRIPT=Android.mk \
+            NDK_APPLICATION_MK=Application.mk \
+            -j$(nproc)
+
+          OUT="$INJ_SRC/libs"
+          echo "=== amkush_injector build output ==="
+          find "$OUT" -type f | sort
+
+          mkdir -p facegate/zygisk-module/injector-out
+          [ -f "$OUT/arm64-v8a/AndKittyInjector" ]   && cp "$OUT/arm64-v8a/AndKittyInjector"   facegate/zygisk-module/injector-out/amkush_injector64
+          [ -f "$OUT/armeabi-v7a/AndKittyInjector" ] && cp "$OUT/armeabi-v7a/AndKittyInjector" facegate/zygisk-module/injector-out/amkush_injector32
+
+          echo "=== injector-out ==="
+          ls -la facegate/zygisk-module/injector-out
+
       - name: Package module assets into APK
         run: |
           ASSETS="facegate/app/src/main/assets"
-          mkdir -p "$ASSETS/system/lib64" "$ASSETS/system/lib" "$ASSETS/zygisk"
+          mkdir -p "$ASSETS/system/lib64" "$ASSETS/system/lib" "$ASSETS/system/bin" "$ASSETS/zygisk"
 
           cp facegate/zygisk-module/module.prop   "$ASSETS/module.prop"
           cp facegate/zygisk-module/service.sh    "$ASSETS/service.sh"
@@ -376,6 +406,11 @@ jobs:
           [ -f "$SH64" ] && cp "$SH64" "$ASSETS/system/lib64/libshadowhook.so"
           [ -f "$SH32" ] && cp "$SH32" "$ASSETS/system/lib/libshadowhook.so"
 
+          INJ64="facegate/zygisk-module/injector-out/amkush_injector64"
+          INJ32="facegate/zygisk-module/injector-out/amkush_injector32"
+          [ -f "$INJ64" ] && cp "$INJ64" "$ASSETS/system/bin/amkush_injector64" && chmod 0755 "$ASSETS/system/bin/amkush_injector64"
+          [ -f "$INJ32" ] && cp "$INJ32" "$ASSETS/system/bin/amkush_injector32" && chmod 0755 "$ASSETS/system/bin/amkush_injector32"
+
           echo "=== Module assets packaged ==="
           find "$ASSETS" -type f | sort
 
@@ -386,7 +421,7 @@ jobs:
       - name: Package Magisk module ZIP (standalone)
         run: |
           PKG="facegate/magisk-pkg"
-          mkdir -p "$PKG/zygisk" "$PKG/system/lib64" "$PKG/system/lib"
+          mkdir -p "$PKG/zygisk" "$PKG/system/lib64" "$PKG/system/lib" "$PKG/system/bin"
           cp facegate/zygisk-module/module.prop  "$PKG/"
           cp facegate/zygisk-module/service.sh   "$PKG/"
           cp facegate/zygisk-module/customize.sh "$PKG/"
@@ -409,6 +444,11 @@ jobs:
           [ -f "$SH64"  ] && cp "$SH64"  "$PKG/system/lib64/libshadowhook.so"  && echo "Bundled libshadowhook.so (arm64-v8a)"
           [ -f "$SH32"  ] && cp "$SH32"  "$PKG/system/lib/libshadowhook.so"    && echo "Bundled libshadowhook.so (armeabi-v7a)"
           [ -f "$SHX64" ] && cp "$SHX64" "$PKG/system/lib64/libshadowhook.so"  && echo "Bundled libshadowhook.so (x86_64)"
+
+          INJ64="facegate/zygisk-module/injector-out/amkush_injector64"
+          INJ32="facegate/zygisk-module/injector-out/amkush_injector32"
+          [ -f "$INJ64" ] && cp "$INJ64" "$PKG/system/bin/amkush_injector64" && chmod 0755 "$PKG/system/bin/amkush_injector64" && echo "Bundled amkush_injector64"
+          [ -f "$INJ32" ] && cp "$INJ32" "$PKG/system/bin/amkush_injector32" && chmod 0755 "$PKG/system/bin/amkush_injector32" && echo "Bundled amkush_injector32"
 
           cd "$PKG" && zip -r "$GITHUB_WORKSPACE/facegate/FaceGate-Module.zip" . && cd -
           echo "Module ZIP: $(du -sh $GITHUB_WORKSPACE/facegate/FaceGate-Module.zip)"
