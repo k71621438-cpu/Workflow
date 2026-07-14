@@ -140,16 +140,31 @@ jobs:
       # ShadowHook only supports armeabi-v7a and arm64-v8a (no x86_64).
       - name: Build ShadowHook from source (static, arm64+armv7 only)
         run: |
-          git clone --depth 1 https://github.com/bytedance/android-inline-hook.git shadowhook-src
+          # ── Clone with pinned tag for reproducibility ───────────────────────
+          # Using a known-good tag instead of floating 'main' prevents upstream
+          # breaking changes from silently breaking our build.
+          git clone --branch v1.1.1 --depth 1 \
+            https://github.com/bytedance/android-inline-hook.git shadowhook-src
 
           SH_OUT=$GITHUB_WORKSPACE/shadowhook-prebuilt
           mkdir -p "$SH_OUT/include"
 
           SHADOWHOOK_CMAKE="shadowhook-src/shadowhook/src/main/cpp/CMakeLists.txt"
 
+          # ── Verify upstream file exists ────────────────────────────────────
+          if [ ! -f "$SHADOWHOOK_CMAKE" ]; then
+            echo "FATAL: $SHADOWHOOK_CMAKE not found after clone"
+            find shadowhook-src -name "CMakeLists.txt" 2>/dev/null || true
+            exit 1
+          fi
+
+          echo "=== Original CMakeLists.txt (first 5 lines) ==="
+          head -n 5 "$SHADOWHOOK_CMAKE"
+
           # ── Patch CMakeLists.txt ────────────────────────────────────────────
-          # 1. Lower cmake_minimum_required: upstream uses 3.30.5, runner has 3.22.1
-          sed -i 's/cmake_minimum_required(VERSION 3\.30\.5)/cmake_minimum_required(VERSION 3.10)/' "$SHADOWHOOK_CMAKE"
+          # 1. Lower cmake_minimum_required: upstream may use 3.30.5, 4.0.2, etc.
+          #    Use version-agnostic regex to match ANY version string.
+          sed -i 's/cmake_minimum_required(VERSION [^)]*)/cmake_minimum_required(VERSION 3.10)/' "$SHADOWHOOK_CMAKE"
 
           # 2. SHARED → STATIC for the main shadowhook target
           sed -i 's/add_library(${TARGET} SHARED/add_library(${TARGET} STATIC/' "$SHADOWHOOK_CMAKE"
@@ -162,16 +177,33 @@ jobs:
 
           # 5. Remove the shadowhook_nothing target entirely (shared-only, not needed for static)
           python3 - <<'PYEOF'
-          with open('shadowhook-src/shadowhook/src/main/cpp/CMakeLists.txt', 'r') as f:
+          import sys
+          cmake_path = 'shadowhook-src/shadowhook/src/main/cpp/CMakeLists.txt'
+          with open(cmake_path, 'r') as f:
               content = f.read()
           marker = '\nset(TARGET "shadowhook_nothing")'
           idx = content.find(marker)
           if idx >= 0:
               content = content[:idx] + '\n'
-          with open('shadowhook-src/shadowhook/src/main/cpp/CMakeLists.txt', 'w') as f:
+              print("Removed shadowhook_nothing target")
+          else:
+              print("WARNING: shadowhook_nothing marker not found — upstream may have changed structure")
+          with open(cmake_path, 'w') as f:
               f.write(content)
           print("CMakeLists.txt patched OK")
           PYEOF
+
+          # ── Verify the cmake_minimum_required patch actually took effect ──
+          echo "=== Verifying cmake_minimum_required patch ==="
+          if grep -q "cmake_minimum_required(VERSION 3.10)" "$SHADOWHOOK_CMAKE"; then
+            echo "✅ cmake_minimum_required successfully patched to 3.10"
+          else
+            echo "❌ FATAL: cmake_minimum_required patch FAILED. File still contains:"
+            grep -n "cmake_minimum_required" "$SHADOWHOOK_CMAKE" || true
+            echo "=== Full file content ==="
+            cat "$SHADOWHOOK_CMAKE"
+            exit 1
+          fi
 
           echo "=== Patched CMakeLists.txt ==="
           cat "$SHADOWHOOK_CMAKE"
