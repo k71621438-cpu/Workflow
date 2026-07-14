@@ -135,12 +135,9 @@ jobs:
           build_libyuv "x86_64"
 
       # ── ShadowHook — build from source as STATIC library ────────────────────
-      # IMPORTANT: The Maven Central AAR (shadowhook-2.0.1.aar) only contains
-      # .so (shared) files — there is NO .a anywhere in the AAR. We must build
-      # from source and patch SHARED→STATIC.
-      # ShadowHook only supports armeabi-v7a and arm64-v8a (no x86_64 support).
-      # Repo layout: source + CMakeLists is at shadowhook/src/main/cpp/
-      #              public header at shadowhook/src/main/cpp/include/shadowhook.h
+      # IMPORTANT: The Maven Central AAR only contains .so files — no .a.
+      # We must build from source and patch SHARED→STATIC.
+      # ShadowHook only supports armeabi-v7a and arm64-v8a (no x86_64).
       - name: Build ShadowHook from source (static, arm64+armv7 only)
         run: |
           git clone --depth 1 https://github.com/bytedance/android-inline-hook.git shadowhook-src
@@ -151,21 +148,22 @@ jobs:
           SHADOWHOOK_CMAKE="shadowhook-src/shadowhook/src/main/cpp/CMakeLists.txt"
 
           # ── Patch CMakeLists.txt ────────────────────────────────────────────
-          # 1. Lower cmake_minimum_required: upstream uses 4.0.2, runner has 3.31.x
-          sed -i 's/cmake_minimum_required(VERSION 4\.0\.2)/cmake_minimum_required(VERSION 3.10)/' "$SHADOWHOOK_CMAKE"
+          # 1. Lower cmake_minimum_required: upstream uses 3.30.5, runner has 3.22.1
+          sed -i 's/cmake_minimum_required(VERSION 3\.30\.5)/cmake_minimum_required(VERSION 3.10)/' "$SHADOWHOOK_CMAKE"
 
           # 2. SHARED → STATIC for the main shadowhook target
-          sed -i 's/add_library(shadowhook SHARED/add_library(shadowhook STATIC/' "$SHADOWHOOK_CMAKE"
+          sed -i 's/add_library(${TARGET} SHARED/add_library(${TARGET} STATIC/' "$SHADOWHOOK_CMAKE"
 
           # 3. Remove --version-script linker flag (only valid for shared libs)
           sed -i '/-Wl,--version-script/d' "$SHADOWHOOK_CMAKE"
 
-          # 4. Remove the shadowhook_nothing target entirely (shared-only, not needed for static)
+          # 4. Remove -Werror to prevent warnings from killing the build
+          sed -i 's/-Werror//g' "$SHADOWHOOK_CMAKE"
+
+          # 5. Remove the shadowhook_nothing target entirely (shared-only, not needed for static)
           python3 - <<'PYEOF'
-          import sys
           with open('shadowhook-src/shadowhook/src/main/cpp/CMakeLists.txt', 'r') as f:
               content = f.read()
-          # Trim everything from the shadowhook_nothing block onward
           marker = '\nset(TARGET "shadowhook_nothing")'
           idx = content.find(marker)
           if idx >= 0:
@@ -203,7 +201,6 @@ jobs:
             echo "ShadowHook $ABI: static OK — $(file "$SH_OUT/$ABI/libshadowhook.a")"
           }
 
-          # Only arm64-v8a and armeabi-v7a — ShadowHook does not support x86_64.
           build_shadowhook "arm64-v8a"
           build_shadowhook "armeabi-v7a"
 
@@ -364,8 +361,6 @@ jobs:
         run: sudo apt-get install -y cmake ninja-build
 
       # ── Build hookProxy.so ──────────────────────────────────────────────────
-      # Only arm64-v8a and armeabi-v7a: ShadowHook does not support x86_64,
-      # and the CMakeLists.txt now FATAL_ERRORs if libshadowhook.a is missing.
       - name: Build hookProxy.so (arm64-v8a + armeabi-v7a)
         run: |
           for ABI in arm64-v8a armeabi-v7a; do
@@ -395,8 +390,6 @@ jobs:
           done
 
       # ── Build amkush_injector (AndKittyInjector + --pid patch) ─────────────
-      # Clone fresh from upstream, apply the --pid patch, then ndk-build.
-      # This avoids vendoring the full AndKittyInjector source tree in itsme5.
       - name: Build amkush_injector (ptrace injection binary — --pid patched)
         run: |
           if [ ! -f "$NDK/ndk-build" ]; then
@@ -413,7 +406,6 @@ jobs:
             AndKittyInjector-src/AndKittyInjector/src/main.cpp
 
           echo "=== Building (arm64-v8a + armeabi-v7a only) ==="
-          # Patch Application.mk to limit to supported ABIs for this project
           sed -i 's/APP_ABI.*:=.*/APP_ABI := arm64-v8a armeabi-v7a/' \
             AndKittyInjector-src/AndKittyInjector/Application.mk
           cat AndKittyInjector-src/AndKittyInjector/Application.mk
@@ -438,8 +430,6 @@ jobs:
           ls -la facegate/zygisk-module/injector-out
 
       # ── Build watchdog_daemon ────────────────────────────────────────────────
-      # Native C daemon that monitors cameraserver and re-injects if the hook
-      # disappears (e.g. after a cameraserver crash/restart).
       - name: Build watchdog_daemon (arm64 + armv7)
         run: |
           TOOLCHAIN=$NDK/toolchains/llvm/prebuilt/linux-x86_64
@@ -464,30 +454,24 @@ jobs:
           ls -la "$WD_OUT"/watchdog_daemon_*
 
       # ── Package module assets into APK ────────────────────────────────────
-      # No Zygisk assets. ShadowHook is statically linked into libhookProxy.so
-      # so no libshadowhook.so is bundled.
       - name: Package module assets into APK
         run: |
           ASSETS="facegate/app/src/main/assets"
           mkdir -p "$ASSETS/system/lib64" "$ASSETS/system/lib" "$ASSETS/system/bin"
 
-          # Module metadata + scripts
           cp facegate/zygisk-module/module.prop      "$ASSETS/module.prop"
           cp facegate/zygisk-module/service.sh       "$ASSETS/service.sh"
           cp facegate/zygisk-module/post-fs-data.sh  "$ASSETS/post-fs-data.sh"
           cp facegate/zygisk-module/sepolicy.rule    "$ASSETS/sepolicy.rule"
 
-          # Injection payload (statically linked — no external .so deps)
           cp facegate/zygisk-build-arm64-v8a/libhookProxy.so   "$ASSETS/system/lib64/libhookProxy.so"
           cp facegate/zygisk-build-armeabi-v7a/libhookProxy.so "$ASSETS/system/lib/libhookProxy.so"
 
-          # Injector binaries (amkush_injector, AndKittyInjector --pid patched)
           INJ64="facegate/zygisk-module/injector-out/amkush_injector64"
           INJ32="facegate/zygisk-module/injector-out/amkush_injector32"
           [ -f "$INJ64" ] && cp "$INJ64" "$ASSETS/system/bin/amkush_injector64" && chmod 0755 "$ASSETS/system/bin/amkush_injector64"
           [ -f "$INJ32" ] && cp "$INJ32" "$ASSETS/system/bin/amkush_injector32" && chmod 0755 "$ASSETS/system/bin/amkush_injector32"
 
-          # Watchdog daemon binaries
           WD64="facegate/zygisk-module/injector-out/watchdog_daemon_arm64_v8a"
           WD32="facegate/zygisk-module/injector-out/watchdog_daemon_armeabi_v7a"
           [ -f "$WD64" ] && cp "$WD64" "$ASSETS/system/bin/watchdog_daemon64" && chmod 0755 "$ASSETS/system/bin/watchdog_daemon64"
@@ -501,8 +485,6 @@ jobs:
         run: ./gradlew assembleDebug --stacktrace
 
       # ── Package Magisk module ZIP ─────────────────────────────────────────
-      # No zygisk/ directory — this module is ptrace-injection-only.
-      # ShadowHook is statically linked; no shared libshadowhook.so to bundle.
       - name: Package Magisk module ZIP (ptrace-injection, no Zygisk)
         run: |
           PKG="facegate/magisk-pkg"
@@ -513,17 +495,14 @@ jobs:
           cp facegate/zygisk-module/customize.sh   "$PKG/"
           cp facegate/zygisk-module/sepolicy.rule  "$PKG/"
 
-          # Injection payload
           cp facegate/zygisk-build-arm64-v8a/libhookProxy.so   "$PKG/system/lib64/libhookProxy.so"
           cp facegate/zygisk-build-armeabi-v7a/libhookProxy.so "$PKG/system/lib/libhookProxy.so"
 
-          # Injector binaries
           INJ64="facegate/zygisk-module/injector-out/amkush_injector64"
           INJ32="facegate/zygisk-module/injector-out/amkush_injector32"
           [ -f "$INJ64" ] && cp "$INJ64" "$PKG/system/bin/amkush_injector64" && chmod 0755 "$PKG/system/bin/amkush_injector64" && echo "Bundled amkush_injector64"
           [ -f "$INJ32" ] && cp "$INJ32" "$PKG/system/bin/amkush_injector32" && chmod 0755 "$PKG/system/bin/amkush_injector32" && echo "Bundled amkush_injector32"
 
-          # Watchdog daemon binaries
           WD64="facegate/zygisk-module/injector-out/watchdog_daemon_arm64_v8a"
           WD32="facegate/zygisk-module/injector-out/watchdog_daemon_armeabi_v7a"
           [ -f "$WD64" ] && cp "$WD64" "$PKG/system/bin/watchdog_daemon64" && chmod 0755 "$PKG/system/bin/watchdog_daemon64" && echo "Bundled watchdog_daemon64"
