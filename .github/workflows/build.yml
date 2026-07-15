@@ -220,6 +220,7 @@ jobs:
               -DCMAKE_TOOLCHAIN_FILE=$NDK/build/cmake/android.toolchain.cmake \
               -DCMAKE_BUILD_TYPE=Release \
               -DBUILD_SHARED_LIBS=OFF \
+              -DCMAKE_C_STANDARD=99 \
               -GNinja \
               -B shadowhook-build-$ABI
             cmake --build shadowhook-build-$ABI -j$(nproc)
