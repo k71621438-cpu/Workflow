@@ -143,7 +143,10 @@ jobs:
           # ── Clone with pinned tag for reproducibility ───────────────────────
           # Using a known-good tag instead of floating 'main' prevents upstream
           # breaking changes from silently breaking our build.
-          git clone --branch v2.0.1 --depth 1 \
+          # PIN REMOVED: v2.0.1 tag predates shadowhook_hook_sym_addr_2(),
+          # SHADOWHOOK_HOOK_WITH_SHARED_MODE (=1), and SHADOWHOOK_CALL_PREV which
+          # hook_proxy.cpp uses.  Latest main has all three under version 2.0.1.
+          git clone --depth 1 \
             https://github.com/bytedance/android-inline-hook.git shadowhook-src
 
           SH_OUT=$GITHUB_WORKSPACE/shadowhook-prebuilt
