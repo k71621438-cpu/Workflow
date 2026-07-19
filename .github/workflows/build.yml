@@ -213,6 +213,29 @@ jobs:
 
           # Copy public header
           cp "shadowhook-src/shadowhook/src/main/cpp/include/shadowhook.h" "$SH_OUT/include/"
+            # ── Stub sh_linker_init → always returns 0 (ERRNO_INIT_LINKER=12 fix) ────────
+            # ROOT CAUSE of 'shadowhook_init failed: Init linker mod failed' (errno=12):
+            #   When libhookProxy.so is loaded via memfd+ptrace it has no file-backed
+            #   path in /proc/self/maps. sh_linker_init() scans maps to find itself
+            #   (to locate the linker base), finds nothing, and returns error.
+            #   shadowhook_init() aborts with ERRNO_INIT_LINKER=12, blocking all hooks.
+            # FIX: replace sh_linker_init() in shadowhook.c with (0) so init always
+            #   succeeds. Linker monitoring is only for deferred by-name hooks;
+            #   we use shadowhook_hook_sym_addr_2() on already-resolved addresses.
+            node --input-type=module << 'NODEOF'
+            import { readFileSync, writeFileSync } from 'fs';
+            const path = 'shadowhook-src/shadowhook/src/main/cpp/shadowhook.c';
+            const src = readFileSync(path, 'utf8');
+            const patched = src.replaceAll('sh_linker_init()',
+              '(0) /* stubbed: linker mon unavail in memfd/ptrace ctx; addr-hooks unaffected */');
+            if (patched === src) {
+              console.warn('WARNING: sh_linker_init() not found in shadowhook.c — upstream renamed? hook_proxy.cpp errno=12 handling is the fallback.');
+            } else {
+              const count = (src.match(/sh_linker_init\(\)/g)||[]).length;
+              console.log('sh_linker_init stubbed in shadowhook.c (' + count + ' occurrence(s))');
+              writeFileSync(path, patched);
+            }
+            NODEOF
 
           build_shadowhook() {
             local ABI=$1
