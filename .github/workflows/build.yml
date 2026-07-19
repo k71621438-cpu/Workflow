@@ -222,20 +222,20 @@ jobs:
             # FIX: replace sh_linker_init() in shadowhook.c with (0) so init always
             #   succeeds. Linker monitoring is only for deferred by-name hooks;
             #   we use shadowhook_hook_sym_addr_2() on already-resolved addresses.
-            node --input-type=module << 'NODEOF'
-            import { readFileSync, writeFileSync } from 'fs';
-            const path = 'shadowhook-src/shadowhook/src/main/cpp/shadowhook.c';
-            const src = readFileSync(path, 'utf8');
-            const patched = src.replaceAll('sh_linker_init()',
-              '(0) /* stubbed: linker mon unavail in memfd/ptrace ctx; addr-hooks unaffected */');
-            if (patched === src) {
-              console.warn('WARNING: sh_linker_init() not found in shadowhook.c — upstream renamed? hook_proxy.cpp errno=12 handling is the fallback.');
-            } else {
-              const count = (src.match(/sh_linker_init\(\)/g)||[]).length;
-              console.log('sh_linker_init stubbed in shadowhook.c (' + count + ' occurrence(s))');
-              writeFileSync(path, patched);
-            }
-            NODEOF
+            # ── Stub sh_linker_init → always returns 0 (ERRNO_INIT_LINKER=12 fix) ────────
+            # ROOT CAUSE: sh_linker_init() scans /proc/self/maps to find the linker base,
+            #   but libhookProxy.so loaded via memfd+ptrace has no file-backed path there,
+            #   so it fails → shadowhook_init returns errno=12 (ERRNO_INIT_LINKER=12).
+            # FIX: stub sh_linker_init() → return 0 in shadowhook.c. We use only
+            #   shadowhook_hook_sym_addr_2() (addr-based), so linker monitoring is unused.
+            SH_C=shadowhook-src/shadowhook/src/main/cpp/shadowhook.c
+            COUNT=$(grep -c 'sh_linker_init()' "$SH_C" 2>/dev/null || echo 0)
+            sed -i 's/sh_linker_init()/(0)/g' "$SH_C"
+            if [ "$COUNT" -eq 0 ]; then
+              echo 'WARNING: sh_linker_init() not found in shadowhook.c — upstream may have renamed it'
+            else
+              echo "sh_linker_init stubbed in shadowhook.c ($COUNT occurrence(s))"
+            fi
 
           build_shadowhook() {
             local ABI=$1
