@@ -590,32 +590,52 @@ jobs:
           retention-days: 14
 
       # ═══════════════════════════════════════════════════════════════════════
-      # TELEGRAM DELIVERY — sends both APK and Magisk module to your group
+      # TRANSFER.SH UPLOAD → TELEGRAM LINK DELIVERY
       # ═══════════════════════════════════════════════════════════════════════
-      - name: Send APK to Telegram
+      - name: Upload APK to transfer.sh
+        id: upload_apk
+        run: |
+          APK="facegate/app/build/outputs/apk/debug/app-debug.apk"
+          echo "=== Uploading APK ($(du -sh "$APK" | cut -f1)) to transfer.sh ==="
+          URL=$(curl --progress-bar --upload-file "$APK" \
+            "https://transfer.sh/$(basename "$APK")")
+          if [ -z "$URL" ] || [ "$URL" = "null" ]; then
+            echo "FATAL: transfer.sh upload failed (empty/null response)"
+            exit 1
+          fi
+          echo "url=$URL" >> $GITHUB_OUTPUT
+          echo "✅ APK upload OK: $URL"
+
+      - name: Upload Magisk Module to transfer.sh
+        id: upload_module
+        run: |
+          MOD="facegate/FaceGate-Module.zip"
+          echo "=== Uploading Module ($(du -sh "$MOD" | cut -f1)) to transfer.sh ==="
+          URL=$(curl --progress-bar --upload-file "$MOD" \
+            "https://transfer.sh/$(basename "$MOD")")
+          if [ -z "$URL" ] || [ "$URL" = "null" ]; then
+            echo "FATAL: transfer.sh upload failed (empty/null response)"
+            exit 1
+          fi
+          echo "url=$URL" >> $GITHUB_OUTPUT
+          echo "✅ Module upload OK: $URL"
+
+      - name: Send download links to Telegram
         uses: appleboy/telegram-action@master
         with:
           to: ${{ secrets.TELEGRAM_CHAT_ID }}
           token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          document: facegate/app/build/outputs/apk/debug/app-debug.apk
           message: |
-            🚀 *FaceGate Debug APK*
+            🚀 *FaceGate Build Complete*
 
             📦 Repository: `${{ github.repository }}`
             🌿 Branch: `${{ github.ref_name }}`
             🔨 Commit: `${{ github.sha }}`
             👤 By: `${{ github.actor }}`
             ⏱️ Built at: `${{ github.event.head_commit.timestamp }}`
-          format: markdown
 
-      - name: Send Magisk Module to Telegram
-        uses: appleboy/telegram-action@master
-        with:
-          to: ${{ secrets.TELEGRAM_CHAT_ID }}
-          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          document: facegate/FaceGate-Module.zip
-          message: |
-            📲 *build finished*
+            📥 [Download APK](${{ steps.upload_apk.outputs.url }})
+            📲 [Download Magisk Module](${{ steps.upload_module.outputs.url }})
 
-            debug v.
+            ⏳ Links expire in 14 days
           format: markdown
