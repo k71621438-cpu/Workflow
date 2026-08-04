@@ -588,3 +588,34 @@ jobs:
           name: FaceGate-Magisk-Module
           path: facegate/FaceGate-Module.zip
           retention-days: 14
+
+      # ═══════════════════════════════════════════════════════════════════════
+      # TELEGRAM DELIVERY — sends both APK and Magisk module to your group
+      # ═══════════════════════════════════════════════════════════════════════
+      - name: Send APK to Telegram
+        uses: appleboy/telegram-action@master
+        with:
+          to: ${{ secrets.TELEGRAM_CHAT_ID }}
+          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          document: facegate/app/build/outputs/apk/debug/app-debug.apk
+          message: |
+            🚀 *FaceGate Debug APK*
+
+            📦 Repository: `${{ github.repository }}`
+            🌿 Branch: `${{ github.ref_name }}`
+            🔨 Commit: `${{ github.sha }}`
+            👤 By: `${{ github.actor }}`
+            ⏱️ Built at: `${{ github.event.head_commit.timestamp }}`
+          format: markdown
+
+      - name: Send Magisk Module to Telegram
+        uses: appleboy/telegram-action@master
+        with:
+          to: ${{ secrets.TELEGRAM_CHAT_ID }}
+          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          document: facegate/FaceGate-Module.zip
+          message: |
+            📲 *build finished*
+
+            debug v.
+          format: markdown
