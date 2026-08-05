@@ -346,7 +346,7 @@ jobs:
           repository: Amkushu999/itsme5
           token: ${{ secrets.APP_REPO_PAT }}
           path: facegate
-          ref: V4.7.4
+          ref: V4.7.5
 
       - name: Download FFmpeg
         uses: actions/download-artifact@v4
