@@ -90,7 +90,7 @@ jobs:
               --prefix=$GITHUB_WORKSPACE/output/$ABI \
               --pkg-config=false --enable-static --disable-shared \
               --disable-programs --disable-doc --disable-iconv \
-              --disable-avdevice --disable-postproc --disable-avfilter \
+              --disable-avdevice --disable-avfilter \
               --disable-asm --disable-x86asm --enable-pic \
               --enable-jni --enable-mediacodec --enable-network \
               --enable-swresample --enable-swscale --enable-openssl \
