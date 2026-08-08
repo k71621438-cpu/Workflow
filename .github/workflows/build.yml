@@ -62,8 +62,8 @@ jobs:
           build_openssl "x86_64"      "x86_64" ""
 
       # ── FFmpeg ──────────────────────────────────────────────────────────────
-      - name: Clone FFmpeg n7.1.5
-        run: git clone --depth 1 --branch n7.1.5 https://github.com/FFmpeg/FFmpeg.git ffmpeg-src
+      - name: Clone FFmpeg n9.0
+        run: git clone --depth 1 --branch n9.0 https://github.com/FFmpeg/FFmpeg.git ffmpeg-src
 
       - name: Build FFmpeg for Android
         working-directory: ffmpeg-src
