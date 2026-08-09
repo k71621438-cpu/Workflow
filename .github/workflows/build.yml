@@ -634,3 +634,4 @@ jobs:
           format: markdown
 # V4.7.8 AR-crop fix: re-trigger build
 # V4.7.8 dim-swap fix + rotation 270 re-trigger
+# V4.7.8 dim-swap fixed + rotation 90 CW (correct direction)
