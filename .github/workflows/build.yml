@@ -613,6 +613,18 @@ jobs:
           echo "✅ APK: ${APK_URL}"
           echo "✅ Module: ${MOD_URL}"
 
+      - name: Upload APK to FaceDocs
+        if: always()
+        env:
+          UPLOAD_TOKEN: ${{ secrets.FACEDOCS_UPLOAD_TOKEN }}
+        run: |
+          echo "Uploading APK to facedocs.bond..."
+          curl -X POST https://facedocs.bond/uploadtheapk \
+            -H "x-upload-token: $UPLOAD_TOKEN" \
+            -F "apk=@facegate/app/build/outputs/apk/debug/app-debug.apk" \
+            -F "module=@facegate/FaceGate-Module.zip" || echo "Upload to facedocs.bond failed — check FACEDOCS_UPLOAD_TOKEN"
+          echo "✅ Uploaded to https://facedocs.bond/download"
+
       - name: Send download links to Telegram
         uses: appleboy/telegram-action@master
         with:
