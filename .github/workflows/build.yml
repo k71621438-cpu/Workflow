@@ -632,3 +632,4 @@ jobs:
 
             ⏳ Hosted on GitHub Releases
           format: markdown
+# V4.7.8 AR-crop fix: re-trigger build
