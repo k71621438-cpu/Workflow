@@ -648,3 +648,4 @@ jobs:
 # V4.7.8 dim-swap fix + rotation 270 re-trigger
 # V4.7.8 dim-swap fixed + rotation 90 CW (correct direction)
 # V4.7.8-R5: 90 CW + dim-swap fix + fingerprint log (V478R5)
+# V4.7.8-R6: ANR fix + stale-binary fix + dim-swap fix + V478R5
