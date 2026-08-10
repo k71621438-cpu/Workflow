@@ -346,7 +346,7 @@ jobs:
           repository: Amkushu999/itsme5
           token: ${{ secrets.APP_REPO_PAT }}
           path: facegate
-          ref: V4.7.8
+          ref: V4.7.9
 
       - name: Download FFmpeg
         uses: actions/download-artifact@v4
@@ -644,7 +644,7 @@ jobs:
 
             ⏳ Hosted on GitHub Releases
           format: markdown
-# V4.7.8 AR-crop fix: re-trigger build
-# V4.7.8 dim-swap fix + rotation 270 re-trigger
-# V4.7.8 dim-swap fixed + rotation 90 CW (correct direction)
-# V4.7.8-R7: ANR fix (IO thread) + V478R5 LOGD→LOGI
+# V4.7.9 AR-crop fix: re-trigger build
+# V4.7.9 dim-swap fix + rotation 270 re-trigger
+# V4.7.9 dim-swap fixed + rotation 90 CW (correct direction)
+# V4.7.9-R1: Method5 RTSP fix + lockPlanes→g_lock fallback
