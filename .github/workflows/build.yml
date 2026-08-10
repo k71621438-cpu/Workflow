@@ -647,4 +647,4 @@ jobs:
 # V4.7.9 AR-crop fix: re-trigger build
 # V4.7.9 dim-swap fix + rotation 270 re-trigger
 # V4.7.9 dim-swap fixed + rotation 90 CW (correct direction)
-# V4.7.9-R2: fix rot 90→270 + g_lock fallback
+# V4.7.9-R3: rot=180 + mmap() dma-buf fallback
