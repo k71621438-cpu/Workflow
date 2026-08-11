@@ -346,7 +346,7 @@ jobs:
           repository: Amkushu999/itsme5
           token: ${{ secrets.APP_REPO_PAT }}
           path: facegate
-          ref: V4.8.0
+          ref: V4.8.1
 
       - name: Download FFmpeg
         uses: actions/download-artifact@v4
@@ -649,3 +649,4 @@ jobs:
 # V4.7.9 dim-swap fixed + rotation 90 CW (correct direction)
 # V4.7.9-R5: rot fallback 180; portrait stretch fix; zoom-out lockPlanes bug
 # V4.8.0: green-frame fix (size ring to source) + no portrait stretch + YV12 chroma fix
+# V4.8.1: fix image-injection glitch (linesize stride) + play/stop overlay button
