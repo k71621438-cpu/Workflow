@@ -346,7 +346,7 @@ jobs:
           repository: Amkushu999/itsme5
           token: ${{ secrets.APP_REPO_PAT }}
           path: facegate
-          ref: V4.8.5
+          ref: V4.8.5.mtk.1
 
       - name: Download FFmpeg
         uses: actions/download-artifact@v4
@@ -466,33 +466,46 @@ jobs:
           done
 
       # ── Build amkush_injector (AndKittyInjector + --pid patch) ─────────────
-      - name: Build amkush_injector (ptrace injection binary — --pid patched)
+      # IMPORTANT: build from the REPO's own injector source (checked out into
+      # facegate/zygisk-module/injector) instead of cloning upstream MJx0.
+      # The repo copy carries two critical fixes that upstream does not:
+      #   1. KittyTrace.cpp vDSO redirect — on Qualcomm/Android 13 the remote
+      #      syscall via the vdso gadget fails ("callSyscall(172): Process didn't
+      #      stop after syscall!" -> SIGTRAP, cameraserver dies). The repo redirects
+      #      the injection PC away from the non-writable vdso to a file-backed exec
+      #      region, so the ptrace syscall succeeds on QCOM.
+      #   2. main.cpp already has --pid support (no patch needed).
+      - name: Build amkush_injector (from repo source, --pid + vDSO redirect)
         run: |
           if [ ! -f "$NDK/ndk-build" ]; then
             echo "ERROR: ndk-build not found at $NDK/ndk-build"
             exit 1
           fi
 
-          echo "=== Cloning AndKittyInjector (upstream) ==="
-          git clone --recursive --depth 1 \
-            https://github.com/MJx0/AndKittyInjector.git AndKittyInjector-src
+          echo "=== Using repo's own injector source ==="
+          INJ_SRC="facegate/zygisk-module/injector/AndKittyInjector"
+          ls -la "$INJ_SRC"
 
-          echo "=== Applying --pid patch ==="
-          python3 facegate/patches/apply_andkitty_pid.py \
-            AndKittyInjector-src/AndKittyInjector/src/main.cpp
+          echo "=== Verifying repo main.cpp has --pid ==="
+          grep -c '"--pid"' "$INJ_SRC/src/main.cpp" || echo "WARNING: --pid not found"
+
+          echo "=== Verifying repo KittyTrace has vDSO redirect ==="
+          grep -c 'vDSO PC redirect' \
+            facegate/zygisk-module/injector/KittyMemoryEx/KittyMemoryEx/KittyTrace.cpp \
+            || echo "WARNING: vDSO redirect not found"
 
           echo "=== Building (arm64-v8a + armeabi-v7a only) ==="
           sed -i 's/APP_ABI.*:=.*/APP_ABI := arm64-v8a armeabi-v7a/' \
-            AndKittyInjector-src/AndKittyInjector/Application.mk
-          cat AndKittyInjector-src/AndKittyInjector/Application.mk
+            "$INJ_SRC/Application.mk"
+          cat "$INJ_SRC/Application.mk"
 
-          "$NDK/ndk-build" -C AndKittyInjector-src/AndKittyInjector \
+          "$NDK/ndk-build" -C "$INJ_SRC" \
             NDK_PROJECT_PATH=. \
             APP_BUILD_SCRIPT=Android.mk \
             NDK_APPLICATION_MK=Application.mk \
             -j$(nproc)
 
-          OUT="AndKittyInjector-src/AndKittyInjector/libs"
+          OUT="$INJ_SRC/libs"
           echo "=== amkush_injector build output ==="
           find "$OUT" -type f | sort
 
@@ -676,3 +689,7 @@ jobs:
 # V4.8.3: fix zoom-out dropping rotation (native letterbox path applies rotation)
 # V4.8.4: fix injected-media quality (preserve aspect ratio + Lanczos scaling)
 # V4.8.5: fix rotate never reaching upright (0->180 fallback bug)
+# V4.8.5.mtk.1: fix RTSP frames distorted (skip auto-rotation for live streams)
+# V4.8.5.qcom.1: Android 13 injector vDSO fix (build injector from repo source)
+#   NOTE: injector is now built from the repo's own zygisk-module/injector source
+#   (which carries the vDSO redirect fix), not upstream MJx0.
