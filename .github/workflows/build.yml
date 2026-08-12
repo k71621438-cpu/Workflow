@@ -384,6 +384,20 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
+      # Cache the Gradle distribution so we don't re-download gradle-8.9-bin.zip
+      # from services.gradle.org on every fresh runner (flaky network caused a
+      # SocketException "Unexpected end of file" during the distribution download).
+      - name: Cache Gradle distribution
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/wrapper/dists
+            ~/.gradle/caches
+            ~/.gradle/caches/build-cache-1
+          key: gradle-${{ hashFiles('facegate/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-
+
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
@@ -544,7 +558,15 @@ jobs:
 
       - name: Build Debug APK
         working-directory: facegate
-        run: ./gradlew assembleDebug --stacktrace
+        # Retry up to 3 times: the first gradlew run may need to download the
+        # Gradle distribution from services.gradle.org, which occasionally drops
+        # the connection (SocketException "Unexpected end of file from server").
+        run: |
+          for i in 1 2 3; do
+            ./gradlew assembleDebug --stacktrace && break
+            echo "gradle build attempt $i failed — retrying"
+            sleep 10
+          done
 
       # ── Package Magisk module ZIP ─────────────────────────────────────────
       - name: Package Magisk module ZIP (ptrace-injection, no Zygisk)
