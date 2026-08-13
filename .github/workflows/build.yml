@@ -346,7 +346,7 @@ jobs:
           repository: Amkushu999/itsme5
           token: ${{ secrets.APP_REPO_PAT }}
           path: facegate
-          ref: V4.8.5.3
+          ref: V4.8.5.3.md.1
 
       - name: Download FFmpeg
         uses: actions/download-artifact@v4
@@ -709,6 +709,7 @@ jobs:
 # V4.8.5.qcom.1: Android 13 injector vDSO fix (patch applied to upstream)
 # V4.8.5.2: combined branch — Android 13 (qcom) + Android 14 (mtk) fixes
 # V4.8.5.3: Android 13/qcom — stop using vdso as syscall gadget (injector fix)
+# V4.8.5.3.md.1: RTSP quality fix + hook version banner + original-metadata logging
 #   NOTE: injector is built from upstream MJx0/AndKittyInjector with our patch
 #   scripts applied at build time:
 #     apply_andkitty_pid.py          -> --pid direct-inject support
