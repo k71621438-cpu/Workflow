@@ -465,7 +465,7 @@ jobs:
             echo "=== hookProxy.so for $ABI: $(ls -lh $BUILD/libhookProxy.so) ==="
           done
 
-      # ── Build amkush_injector (AndKittyInjector + --pid + vDSO patches) ─────
+      # ── Build amkush_injector (AndKittyInjector + patches) ────────────────
       # Build from UPSTREAM MJx0/AndKittyInjector, applying our fixes as patch
       # scripts at build time (no vendored fork to maintain):
       #   1. --pid direct-inject support           -> patches/apply_andkitty_pid.py
@@ -477,7 +477,12 @@ jobs:
       #      so a file-backed .so (libc/apex/system) is used as the gadget instead.
       #   3. vDSO PC redirect safety net          -> patches/apply_andkitty_vdso.py
       #      (redirects the POKEDATA path's injection PC away from the vdso).
-      - name: Build amkush_injector (upstream + --pid + vDSO patches)
+      #   4. ARM32 PTRACE_SYSCALL fix (Android 11 / 32-bit) -> patches/apply_andkitty_arm32_syscall.py
+      #      On 32-bit ARM, single-stepping `svc #0` in libc.so text via
+      #      PTRACE_SINGLESTEP fails with SIGTRAP/CODE=2 (kills cameraserver).
+      #      The patch executes the remote syscall with PTRACE_SYSCALL (entry/exit
+      #      stops) so the kernel drives the svc reliably on ARM32.
+      - name: Build amkush_injector (upstream + --pid + vDSO + ARM32 patches)
         run: |
           if [ ! -f "$NDK/ndk-build" ]; then
             echo "ERROR: ndk-build not found at $NDK/ndk-build"
@@ -500,6 +505,10 @@ jobs:
           python3 facegate/patches/apply_andkitty_vdso.py \
             AndKittyInjector-src/KittyMemoryEx/KittyMemoryEx/KittyTrace.cpp
 
+          echo "=== Applying ARM32 PTRACE_SYSCALL fix (Android 11 / 32-bit) ==="
+          python3 facegate/patches/apply_andkitty_arm32_syscall.py \
+            AndKittyInjector-src/KittyMemoryEx/KittyMemoryEx/KittyTrace.cpp
+
           echo "=== Verifying vdso excluded from gadget scan ==="
           grep -c 'vdso excluded from syscall gadget' \
             AndKittyInjector-src/AndKittyInjector/src/Injector/KittyInjectorSyscall.hpp \
@@ -509,6 +518,11 @@ jobs:
           grep -c 'vDSO PC redirect' \
             AndKittyInjector-src/KittyMemoryEx/KittyMemoryEx/KittyTrace.cpp \
             || echo "WARNING: vDSO redirect not found"
+
+          echo "=== Verifying ARM32 stepSyscall present ==="
+          grep -c 'stepSyscall' \
+            AndKittyInjector-src/KittyMemoryEx/KittyMemoryEx/KittyTrace.cpp \
+            || echo "WARNING: ARM32 stepSyscall not found"
 
           echo "=== Building (arm64-v8a + armeabi-v7a only) ==="
           sed -i 's/APP_ABI.*:=.*/APP_ABI := arm64-v8a armeabi-v7a/' \
