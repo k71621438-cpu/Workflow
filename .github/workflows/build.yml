@@ -435,8 +435,18 @@ jobs:
         run: sudo apt-get install -y cmake ninja-build
 
       # ── Build hookProxy.so ──────────────────────────────────────────────────
+      # HOOK_PROXY_VERSION is derived automatically from the checked-out git
+      # branch + short commit SHA, so the version marker in the .so is ALWAYS
+      # accurate and never needs a manual bump. It is logged at load time:
+      #   libhookProxy.so loaded ... version=<branch>-<sha>
       - name: Build hookProxy.so (arm64-v8a + armeabi-v7a)
         run: |
+          # Derive version from the checked-out repo (branch + short sha).
+          FG_BRANCH=$(git -C facegate rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+          FG_SHA=$(git -C facegate rev-parse --short=10 HEAD 2>/dev/null || echo "unknown")
+          HOOK_VER="${FG_BRANCH}-${FG_SHA}"
+          echo "HOOK_PROXY_VERSION=${HOOK_VER}"
+
           for ABI in arm64-v8a armeabi-v7a; do
             echo "=== Building hookProxy.so for $ABI ==="
 
@@ -448,6 +458,7 @@ jobs:
             fi
 
             BUILD="facegate/zygisk-build-$ABI"
+            rm -rf "$BUILD"
             mkdir -p "$BUILD"
             cmake facegate/zygisk-module/jni \
               -DANDROID_ABI=$ABI \
@@ -456,6 +467,7 @@ jobs:
               -DCMAKE_BUILD_TYPE=Release \
               -DCMAKE_CXX_FLAGS="-static-libstdc++" \
               -DCMAKE_SHARED_LINKER_FLAGS="-static-libstdc++" \
+              -DHOOK_PROXY_VERSION="$HOOK_VER" \
               -DSHADOWHOOK_ROOT=$GITHUB_WORKSPACE/facegate/shadowhook-android \
               -DLIBYUV_ROOT=$GITHUB_WORKSPACE/facegate/libyuv-android \
               -DTURBOJPEG_ROOT=$GITHUB_WORKSPACE/facegate/turbojpeg-android \
