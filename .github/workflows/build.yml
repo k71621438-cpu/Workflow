@@ -346,7 +346,7 @@ jobs:
           repository: Amkushu999/itsme5
           token: ${{ secrets.APP_REPO_PAT }}
           path: facegate
-          ref: V4.8.5.4
+          ref: V4.8.5.4.1
 
       - name: Download FFmpeg
         uses: actions/download-artifact@v4
@@ -737,6 +737,7 @@ jobs:
 # V4.8.5.3: Android 13/qcom — stop using vdso as syscall gadget (injector fix)
 # V4.8.5.3.md.1: RTSP quality fix + hook version banner + original-metadata logging
 # V4.8.5.4: Android 11 (32-bit) dlopen 'library not found' — use memfd dlopen
+# V4.8.5.4.1: metadata-only observer for processCaptureResult (logs original camera metadata + values)
 #   NOTE: injector is built from upstream MJx0/AndKittyInjector with our patch
 #   scripts applied at build time:
 #     apply_andkitty_pid.py          -> --pid direct-inject support
