@@ -346,7 +346,7 @@ jobs:
           repository: Amkushu999/itsme5
           token: ${{ secrets.APP_REPO_PAT }}
           path: facegate
-          ref: V4.8.5.4.5
+          ref: V4.8.5.4.6
 
       - name: Download FFmpeg
         uses: actions/download-artifact@v4
@@ -599,8 +599,6 @@ jobs:
           mkdir -p "$ASSETS/system/lib64" "$ASSETS/system/lib" "$ASSETS/system/bin"
 
           cp facegate/zygisk-module/module.prop      "$ASSETS/module.prop"
-          cp facegate/zygisk-module/service.sh       "$ASSETS/service.sh"
-          cp facegate/zygisk-module/post-fs-data.sh  "$ASSETS/post-fs-data.sh"
           cp facegate/zygisk-module/sepolicy.rule    "$ASSETS/sepolicy.rule"
 
           cp facegate/zygisk-build-arm64-v8a/libhookProxy.so   "$ASSETS/system/lib64/libhookProxy.so"
@@ -638,8 +636,6 @@ jobs:
           mkdir -p "$PKG/system/lib64" "$PKG/system/lib" "$PKG/system/bin"
 
           cp facegate/zygisk-module/module.prop    "$PKG/"
-          cp facegate/zygisk-module/service.sh     "$PKG/"
-          cp facegate/zygisk-module/customize.sh   "$PKG/"
           cp facegate/zygisk-module/sepolicy.rule  "$PKG/"
 
           cp facegate/zygisk-build-arm64-v8a/libhookProxy.so   "$PKG/system/lib64/libhookProxy.so"
