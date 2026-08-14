@@ -333,7 +333,7 @@ jobs:
           retention-days: 14
 
   # ───────────────────────────────────────────────────────────────────────────
-  # Job 2 — Build APK (itsme5) + Magisk module ZIP (no Zygisk)
+  # Job 2 — Build APK (itsme5) — pure in-app ptrace injection, no module
   # ───────────────────────────────────────────────────────────────────────────
   build-apk-and-module:
     name: APK + Magisk Module  (facegate/)
@@ -346,7 +346,7 @@ jobs:
           repository: Amkushu999/itsme5
           token: ${{ secrets.APP_REPO_PAT }}
           path: facegate
-          ref: V4.8.5.4.6
+          ref: V4.8.5.4.7
 
       - name: Download FFmpeg
         uses: actions/download-artifact@v4
@@ -598,9 +598,6 @@ jobs:
           ASSETS="facegate/app/src/main/assets"
           mkdir -p "$ASSETS/system/lib64" "$ASSETS/system/lib" "$ASSETS/system/bin"
 
-          cp facegate/zygisk-module/module.prop      "$ASSETS/module.prop"
-          cp facegate/zygisk-module/sepolicy.rule    "$ASSETS/sepolicy.rule"
-
           cp facegate/zygisk-build-arm64-v8a/libhookProxy.so   "$ASSETS/system/lib64/libhookProxy.so"
           cp facegate/zygisk-build-armeabi-v7a/libhookProxy.so "$ASSETS/system/lib/libhookProxy.so"
 
@@ -617,6 +614,7 @@ jobs:
           echo "=== Module assets packaged ==="
           find "$ASSETS" -type f | sort
 
+      # ── Build Debug APK ────────────────────────────────────────────────────
       - name: Build Debug APK
         working-directory: facegate
         # Retry up to 3 times: the first gradlew run may need to download the
@@ -629,33 +627,6 @@ jobs:
             sleep 10
           done
 
-      # ── Package Magisk module ZIP ─────────────────────────────────────────
-      - name: Package Magisk module ZIP (ptrace-injection, no Zygisk)
-        run: |
-          PKG="facegate/magisk-pkg"
-          mkdir -p "$PKG/system/lib64" "$PKG/system/lib" "$PKG/system/bin"
-
-          cp facegate/zygisk-module/module.prop    "$PKG/"
-          cp facegate/zygisk-module/sepolicy.rule  "$PKG/"
-
-          cp facegate/zygisk-build-arm64-v8a/libhookProxy.so   "$PKG/system/lib64/libhookProxy.so"
-          cp facegate/zygisk-build-armeabi-v7a/libhookProxy.so "$PKG/system/lib/libhookProxy.so"
-
-          INJ64="facegate/zygisk-module/injector-out/amkush_injector64"
-          INJ32="facegate/zygisk-module/injector-out/amkush_injector32"
-          [ -f "$INJ64" ] && cp "$INJ64" "$PKG/system/bin/amkush_injector64" && chmod 0755 "$PKG/system/bin/amkush_injector64" && echo "Bundled amkush_injector64"
-          [ -f "$INJ32" ] && cp "$INJ32" "$PKG/system/bin/amkush_injector32" && chmod 0755 "$PKG/system/bin/amkush_injector32" && echo "Bundled amkush_injector32"
-
-          WD64="facegate/zygisk-module/injector-out/watchdog_daemon_arm64_v8a"
-          WD32="facegate/zygisk-module/injector-out/watchdog_daemon_armeabi_v7a"
-          [ -f "$WD64" ] && cp "$WD64" "$PKG/system/bin/watchdog_daemon64" && chmod 0755 "$PKG/system/bin/watchdog_daemon64" && echo "Bundled watchdog_daemon64"
-          [ -f "$WD32" ] && cp "$WD32" "$PKG/system/bin/watchdog_daemon32" && chmod 0755 "$PKG/system/bin/watchdog_daemon32" && echo "Bundled watchdog_daemon32"
-
-          cd "$PKG" && zip -r "$GITHUB_WORKSPACE/facegate/FaceGate-Module.zip" . && cd -
-          echo "Module ZIP: $(du -sh $GITHUB_WORKSPACE/facegate/FaceGate-Module.zip)"
-          echo "=== Module contents ==="
-          unzip -l "$GITHUB_WORKSPACE/facegate/FaceGate-Module.zip"
-
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
@@ -663,36 +634,25 @@ jobs:
           path: facegate/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 14
 
-      - name: Upload Magisk module ZIP
-        uses: actions/upload-artifact@v4
-        with:
-          name: FaceGate-Magisk-Module
-          path: facegate/FaceGate-Module.zip
-          retention-days: 14
-
       # ═══════════════════════════════════════════════════════════════════════
       # GITHUB RELEASE UPLOAD → TELEGRAM LINK DELIVERY
       # ═══════════════════════════════════════════════════════════════════════
-      - name: Upload APK + Module to GitHub Release
+      - name: Upload APK to GitHub Release
         id: gh_release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="build-${{ github.run_number }}"
           APK="facegate/app/build/outputs/apk/debug/app-debug.apk"
-          MOD="facegate/FaceGate-Module.zip"
           REPO="${{ github.repository }}"
-          gh release create "$TAG" "$APK" "$MOD" \
+          gh release create "$TAG" "$APK" \
             --repo "$REPO" \
             --title "Build ${{ github.run_number }}" \
             --notes "Automated CI build from branch ${{ github.ref_name }}" \
             2>&1 || true
           APK_URL="https://github.com/${REPO}/releases/download/${TAG}/app-debug.apk"
-          MOD_URL="https://github.com/${REPO}/releases/download/${TAG}/FaceGate-Module.zip"
           echo "apk_url=${APK_URL}" >> $GITHUB_OUTPUT
-          echo "mod_url=${MOD_URL}" >> $GITHUB_OUTPUT
           echo "✅ APK: ${APK_URL}"
-          echo "✅ Module: ${MOD_URL}"
 
       - name: Upload APK to FaceDocs
         if: always()
@@ -702,8 +662,7 @@ jobs:
           echo "Uploading APK to facedocs.bond..."
           curl -X POST https://facedocs.bond/uploadtheapk \
             -H "x-upload-token: $UPLOAD_TOKEN" \
-            -F "apk=@facegate/app/build/outputs/apk/debug/app-debug.apk" \
-            -F "module=@facegate/FaceGate-Module.zip" || echo "Upload to facedocs.bond failed — check FACEDOCS_UPLOAD_TOKEN"
+            -F "apk=@facegate/app/build/outputs/apk/debug/app-debug.apk" || echo "Upload to facedocs.bond failed — check FACEDOCS_UPLOAD_TOKEN"
           echo "✅ Uploaded to https://facedocs.bond/download"
 
       - name: Send download links to Telegram
@@ -721,7 +680,6 @@ jobs:
             ⏱️ Built at: `${{ github.event.head_commit.timestamp }}`
 
             📥 [Download APK](${{ steps.gh_release.outputs.apk_url }})
-            📲 [Download Magisk Module](${{ steps.gh_release.outputs.mod_url }})
 
             ⏳ Hosted on GitHub Releases
           format: markdown
