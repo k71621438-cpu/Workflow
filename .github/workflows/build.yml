@@ -634,17 +634,17 @@ jobs:
 
       - name: Build Release APK
         working-directory: facegate
-        env:
-          KEYSTORE_PATH: ${{ runner.home }}/facegate-release.jks
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        # Retry up to 3 times: the first gradlew run may need to download the
-        # Gradle distribution from services.gradle.org, which occasionally drops
-        # the connection (SocketException "Unexpected end of file from server").
+        # Pass keystore values as -P Gradle project properties: env vars are NOT
+        # reliably inherited by the Gradle daemon (user.home can resolve to "/"),
+        # which caused "Keystore file '/facegate-release.jks' not found".
         run: |
           for i in 1 2 3; do
-            ./gradlew assembleRelease --stacktrace && break
+            ./gradlew assembleRelease \
+              -PKEYSTORE_PATH="${{ runner.home }}/facegate-release.jks" \
+              -PKEYSTORE_PASSWORD="${{ secrets.KEYSTORE_PASSWORD }}" \
+              -PKEY_ALIAS="${{ secrets.KEY_ALIAS }}" \
+              -PKEY_PASSWORD="${{ secrets.KEY_PASSWORD }}" \
+              --stacktrace && break
             echo "gradle build attempt $i failed — retrying"
             sleep 10
           done
