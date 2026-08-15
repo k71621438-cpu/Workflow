@@ -621,12 +621,13 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
         run: |
           if [ -n "$KEYSTORE_BASE64" ]; then
-            echo "$KEYSTORE_BASE64" | base64 -d > "$HOME/facegate-release.jks"
-            chmod 600 "$HOME/facegate-release.jks"
+            mkdir -p /home/runner
+            echo "$KEYSTORE_BASE64" | base64 -d > /home/runner/facegate-release.jks
+            chmod 600 /home/runner/facegate-release.jks
             echo "keystore decoded"
-            ls -la "$HOME/facegate-release.jks"
+            ls -la /home/runner/facegate-release.jks
             echo "=== keystore cert fingerprint (should be 3857D85D...) ==="
-            keytool -list -v -keystore "$HOME/facegate-release.jks" -storepass "$KEYSTORE_PASSWORD" 2>/dev/null \
+            keytool -list -v -keystore /home/runner/facegate-release.jks -storepass "$KEYSTORE_PASSWORD" 2>/dev/null \
               | grep -iE "SHA256|Alias name|CN=" | head
           else
             echo "WARNING: KEYSTORE_BASE64 secret missing — will fall back to debug signing"
@@ -638,9 +639,13 @@ jobs:
         # reliably inherited by the Gradle daemon (user.home can resolve to "/"),
         # which caused "Keystore file '/facegate-release.jks' not found".
         run: |
+          # Explicit /home/runner path (ubuntu-latest runner.home) so the keystore
+          # path is identical in decode and gradle steps regardless of $HOME.
+          KS=/home/runner/facegate-release.jks
+          ls -la "$KS" || echo "WARNING: keystore not found at $KS"
           for i in 1 2 3; do
             ./gradlew assembleRelease \
-              -PKEYSTORE_PATH="${{ runner.home }}/facegate-release.jks" \
+              -PKEYSTORE_PATH="$KS" \
               -PKEYSTORE_PASSWORD="${{ secrets.KEYSTORE_PASSWORD }}" \
               -PKEY_ALIAS="${{ secrets.KEY_ALIAS }}" \
               -PKEY_PASSWORD="${{ secrets.KEY_PASSWORD }}" \
