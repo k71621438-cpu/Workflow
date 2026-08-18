@@ -296,6 +296,60 @@ jobs:
           build_tj "armeabi-v7a"
           build_tj "x86_64"
 
+      # ── OpenCV (core·imgproc·flann·features2d·calib3d·objdetect·dnn) ─────────
+      # Static, both ABIs, built from source. dnn = YuNet ONNX runtime (bundled
+      # protobuf); objdetect = cv::FaceDetectorYN. Disabled codecs/JNI/etc. to
+      # keep the build lean.
+      - name: Build OpenCV for Android (static, arm64+armv7)
+        run: |
+          git clone --depth 1 --branch 4.10.0 https://github.com/opencv/opencv.git opencv-src
+          OC_OUT=$GITHUB_WORKSPACE/opencv-prebuilt
+          mkdir -p "$OC_OUT"
+
+          build_opencv() {
+            local ABI=$1
+            echo "=== OpenCV configure for $ABI ==="
+            cmake opencv-src \
+              -DCMAKE_TOOLCHAIN_FILE=$NDK/build/cmake/android.toolchain.cmake \
+              -DANDROID_ABI=$ABI \
+              -DANDROID_PLATFORM=android-24 \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DBUILD_SHARED_LIBS=OFF \
+              -DBUILD_LIST=core,imgproc,flann,features2d,calib3d,objdetect,dnn \
+              -DBUILD_opencv_dnn=ON \
+              -DBUILD_PROTOBUF=ON \
+              -DPROTOBUF_UPDATE_FILES=ON \
+              -DWITH_OPENCL=OFF -DWITH_IPP=OFF -DWITH_TBB=OFF -DWITH_OPENMP=OFF \
+              -DWITH_JPEG=OFF -DWITH_PNG=OFF -DWITH_WEBP=OFF -DWITH_TIFF=OFF \
+              -DWITH_JASPER=OFF -DWITH_OPENEXR=OFF \
+              -DBUILD_JAVA=OFF -DBUILD_ANDROID_PROJECTS=OFF -DBUILD_ANDROID_EXAMPLES=OFF \
+              -DBUILD_TESTS=OFF -DBUILD_PERF_TESTS=OFF -DBUILD_EXAMPLES=OFF -DBUILD_DOCS=OFF \
+              -B opencv-build-$ABI
+            echo "=== OpenCV build for $ABI ==="
+            cmake --build opencv-build-$ABI --target opencv_core opencv_imgproc opencv_flann opencv_features2d opencv_calib3d opencv_objdetect opencv_dnn -j$(nproc)
+
+            local LIBDIR="$OC_OUT/$ABI/lib"
+            mkdir -p "$LIBDIR"
+            # Collect every .a (module libs + bundled protobuf/zlib) so static
+            # linking never misses a dependency.
+            find opencv-build-$ABI -name "*.a" -exec cp {} "$LIBDIR/" \;
+
+            local HDR="$OC_OUT/include"
+            local HDR2="$OC_OUT/include/opencv2"
+            mkdir -p "$HDR2"
+            for m in core imgproc flann features2d calib3d objdetect dnn; do
+              cp -r "opencv-src/modules/$m/include/opencv2/." "$HDR2/" 2>/dev/null || true
+            done
+            cp opencv-build-$ABI/opencv2/opencv_modules.hpp "$HDR2/" 2>/dev/null || true
+            cp opencv-build-$ABI/cvconfig.h "$HDR2/" 2>/dev/null || true
+            cp opencv-build-$ABI/cvconfig.h "$HDR/" 2>/dev/null || true
+          }
+
+          build_opencv "arm64-v8a"
+          build_opencv "armeabi-v7a"
+          echo "=== OpenCV prebuilt tree ==="
+          find "$OC_OUT" -maxdepth 3 -type d | sort | head -40
+
       # ── Upload all native artifacts ──────────────────────────────────────────
       - name: Upload FFmpeg
         uses: actions/upload-artifact@v4
@@ -332,6 +386,13 @@ jobs:
           path: turbojpeg-prebuilt/
           retention-days: 14
 
+      - name: Upload OpenCV
+        uses: actions/upload-artifact@v4
+        with:
+          name: opencv-android-prebuilt
+          path: opencv-prebuilt/
+          retention-days: 14
+
   # ───────────────────────────────────────────────────────────────────────────
   # Job 2 — Build APK (itsme5) — pure in-app ptrace injection, no module
   # ───────────────────────────────────────────────────────────────────────────
@@ -346,7 +407,7 @@ jobs:
           repository: Amkushu999/itsme5
           token: ${{ secrets.APP_REPO_PAT }}
           path: facegate
-          ref: test.8
+          ref: test.9
 
       - name: Download FFmpeg
         uses: actions/download-artifact@v4
@@ -377,6 +438,12 @@ jobs:
         with:
           name: turbojpeg-android-prebuilt
           path: facegate/turbojpeg-android
+
+      - name: Download OpenCV
+        uses: actions/download-artifact@v4
+        with:
+          name: opencv-android-prebuilt
+          path: facegate/opencv-android
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -426,6 +493,7 @@ jobs:
           echo "ffmpeg.dir=$GITHUB_WORKSPACE/facegate/ffmpeg-android"   >> local.properties
           echo "openssl.dir=$GITHUB_WORKSPACE/facegate/openssl-android"  >> local.properties
           echo "libyuv.dir=$GITHUB_WORKSPACE/facegate/libyuv-android"   >> local.properties
+          echo "opencv.dir=$GITHUB_WORKSPACE/facegate/opencv-android"   >> local.properties
 
       - name: Make gradlew executable
         working-directory: facegate
