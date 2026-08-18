@@ -302,7 +302,11 @@ jobs:
       # keep the build lean.
       - name: Build OpenCV for Android (static, arm64+armv7)
         run: |
-          git clone --depth 1 --branch 4.14.0 https://github.com/opencv/opencv.git opencv-src
+          # --recurse-submodules: pulls 3rdparty/protobuf (git submodule) which
+          # BUILD_PROTOBUF=ON compiles for the dnn ONNX importer. Without it the
+          # submodule dir is empty and configure fatal-errors on protobuf.
+          git clone --depth 1 --branch 4.14.0 --recurse-submodules --shallow-submodules \
+            https://github.com/opencv/opencv.git opencv-src
           OC_OUT=$GITHUB_WORKSPACE/opencv-prebuilt
           mkdir -p "$OC_OUT"
 
@@ -318,7 +322,6 @@ jobs:
               -DBUILD_LIST=core,imgproc,flann,features2d,calib3d,objdetect,dnn \
               -DBUILD_opencv_dnn=ON \
               -DBUILD_PROTOBUF=ON \
-              -DPROTOBUF_UPDATE_FILES=ON \
               -DWITH_OPENCL=OFF -DWITH_IPP=OFF -DWITH_TBB=OFF -DWITH_OPENMP=OFF \
               -DWITH_JPEG=OFF -DWITH_PNG=OFF -DWITH_WEBP=OFF -DWITH_TIFF=OFF \
               -DWITH_JASPER=OFF -DWITH_OPENEXR=OFF \
