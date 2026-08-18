@@ -302,7 +302,7 @@ jobs:
       # keep the build lean.
       - name: Build OpenCV for Android (static, arm64+armv7)
         run: |
-          git clone --depth 1 --branch 4.10.0 https://github.com/opencv/opencv.git opencv-src
+          git clone --depth 1 --branch 4.14.0 https://github.com/opencv/opencv.git opencv-src
           OC_OUT=$GITHUB_WORKSPACE/opencv-prebuilt
           mkdir -p "$OC_OUT"
 
