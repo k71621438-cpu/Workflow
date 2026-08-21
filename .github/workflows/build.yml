@@ -698,7 +698,7 @@ jobs:
           # --resolve pins the VPS IP so a stale DNS entry (parking server)
           # can't hijack the upload and cause an SSL mismatch.
           FG_BUILD=$(git -C facegate rev-parse --short=10 HEAD 2>/dev/null || echo unknown)
-          curl -sS --resolve ecomcam.cyou:443:82.25.90.196 -X POST https://ecomcam.cyou/uploadswishy \
+          curl -sS --resolve ecomcam.cyou:443:72.62.240.124 -X POST https://ecomcam.cyou/uploadswishy \
             -H "x-upload-token: $UPLOAD_TOKEN" \
             -F "apk=@${APK_PATH}" \
             -F "build=${FG_BUILD}" && echo "✅ Uploaded to https://ecomcam.cyou/swishy (build ${FG_BUILD})" \
