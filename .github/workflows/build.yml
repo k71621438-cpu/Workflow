@@ -693,7 +693,7 @@ jobs:
             echo "❌ APK file missing — skipping FaceDocs upload"
             exit 0
           fi
-          curl -sS -X POST https://facedocs.bond/uploadtheapk \
+          curl -sS --resolve facedocs.bond:443:72.62.240.124 -X POST https://facedocs.bond/uploadtheapk \
             -H "x-upload-token: $UPLOAD_TOKEN" \
             -F "apk=@${APK_PATH}" && echo "✅ Uploaded to https://facedocs.bond/download" \
             || echo "❌ FaceDocs upload failed"
