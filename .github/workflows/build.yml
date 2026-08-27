@@ -6,11 +6,11 @@ on:
     branches: [ "main", "master" ]
 
 jobs:
-  # ───────────────────────────────────────────────────────────────────────────
-  # Job 1 — Build all native C/C++ libraries for Android
-  # ───────────────────────────────────────────────────────────────────────────
+  # ---------------------------------------------------------------------------
+  # Job 1 -- Build all native C/C++ libraries for Android
+  # ---------------------------------------------------------------------------
   build-native-libs:
-    name: Native Libs (FFmpeg · libyuv · ShadowHook-static · turbojpeg)
+    name: Native Libs (FFmpeg * libyuv * ShadowHook-static * turbojpeg)
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -36,7 +36,7 @@ jobs:
           echo "NDK=$PWD/android-ndk-r25c"              >> $GITHUB_ENV
           echo "ANDROID_NDK_ROOT=$PWD/android-ndk-r25c" >> $GITHUB_ENV
 
-      # ── OpenSSL ─────────────────────────────────────────────────────────────
+      # -- OpenSSL -------------------------------------------------------------
       - name: Build OpenSSL for Android
         run: |
           git clone --depth 1 --branch openssl-3.1.4 \
@@ -61,7 +61,7 @@ jobs:
           build_openssl "armeabi-v7a" "arm"    "no-asm"
           build_openssl "x86_64"      "x86_64" ""
 
-      # ── FFmpeg ──────────────────────────────────────────────────────────────
+      # -- FFmpeg --------------------------------------------------------------
       - name: Clone FFmpeg n9.0
         run: git clone --depth 1 --branch n9.0 https://github.com/FFmpeg/FFmpeg.git ffmpeg-src
 
@@ -108,7 +108,7 @@ jobs:
           build_abi "armeabi-v7a" "arm"     "armv7-a" "armv7a-linux-androideabi"
           build_abi "x86_64"      "x86_64"  "x86-64"  "x86_64-linux-android"
 
-      # ── libyuv (Google Chromium) ─────────────────────────────────────────────
+      # -- libyuv (Google Chromium) ---------------------------------------------
       - name: Build libyuv for Android
         run: |
           git clone --depth 1 https://chromium.googlesource.com/libyuv/libyuv libyuv-src
@@ -134,13 +134,13 @@ jobs:
           build_libyuv "armeabi-v7a"
           build_libyuv "x86_64"
 
-      # ── ShadowHook — build from source as STATIC library ────────────────────
-      # IMPORTANT: The Maven Central AAR only contains .so files — no .a.
-      # We must build from source and patch SHARED→STATIC.
+      # -- ShadowHook -- build from source as STATIC library --------------------
+      # IMPORTANT: The Maven Central AAR only contains .so files -- no .a.
+      # We must build from source and patch SHARED->STATIC.
       # ShadowHook only supports armeabi-v7a and arm64-v8a (no x86_64).
       - name: Build ShadowHook from source (static, arm64+armv7 only)
         run: |
-          # ── Clone with pinned tag for reproducibility ───────────────────────
+          # -- Clone with pinned tag for reproducibility -----------------------
           # Using a known-good tag instead of floating 'main' prevents upstream
           # breaking changes from silently breaking our build.
           # PIN REMOVED: v2.0.1 tag predates shadowhook_hook_sym_addr_2(),
@@ -154,7 +154,7 @@ jobs:
 
           SHADOWHOOK_CMAKE="shadowhook-src/shadowhook/src/main/cpp/CMakeLists.txt"
 
-          # ── Verify upstream file exists ────────────────────────────────────
+          # -- Verify upstream file exists ------------------------------------
           if [ ! -f "$SHADOWHOOK_CMAKE" ]; then
             echo "FATAL: $SHADOWHOOK_CMAKE not found after clone"
             find shadowhook-src -name "CMakeLists.txt" 2>/dev/null || true
@@ -164,12 +164,12 @@ jobs:
           echo "=== Original CMakeLists.txt (first 5 lines) ==="
           head -n 5 "$SHADOWHOOK_CMAKE"
 
-          # ── Patch CMakeLists.txt ────────────────────────────────────────────
+          # -- Patch CMakeLists.txt --------------------------------------------
           # 1. Lower cmake_minimum_required: upstream may use 3.30.5, 4.0.2, etc.
           #    Use version-agnostic regex to match ANY version string.
           sed -i 's/cmake_minimum_required(VERSION [^)]*)/cmake_minimum_required(VERSION 3.10)/' "$SHADOWHOOK_CMAKE"
 
-          # 2. SHARED → STATIC for the main shadowhook target
+          # 2. SHARED -> STATIC for the main shadowhook target
           sed -i 's/add_library(${TARGET} SHARED/add_library(${TARGET} STATIC/' "$SHADOWHOOK_CMAKE"
 
           # 3. Remove --version-script linker flag (only valid for shared libs)
@@ -190,18 +190,18 @@ jobs:
               content = content[:idx] + '\n'
               print("Removed shadowhook_nothing target")
           else:
-              print("WARNING: shadowhook_nothing marker not found — upstream may have changed structure")
+              print("WARNING: shadowhook_nothing marker not found -- upstream may have changed structure")
           with open(cmake_path, 'w') as f:
               f.write(content)
           print("CMakeLists.txt patched OK")
           PYEOF
 
-          # ── Verify the cmake_minimum_required patch actually took effect ──
+          # -- Verify the cmake_minimum_required patch actually took effect --
           echo "=== Verifying cmake_minimum_required patch ==="
           if grep -q "cmake_minimum_required(VERSION 3.10)" "$SHADOWHOOK_CMAKE"; then
-            echo "✅ cmake_minimum_required successfully patched to 3.10"
+            echo "- cmake_minimum_required successfully patched to 3.10"
           else
-            echo "❌ FATAL: cmake_minimum_required patch FAILED. File still contains:"
+            echo "- FATAL: cmake_minimum_required patch FAILED. File still contains:"
             grep -n "cmake_minimum_required" "$SHADOWHOOK_CMAKE" || true
             echo "=== Full file content ==="
             cat "$SHADOWHOOK_CMAKE"
@@ -213,7 +213,7 @@ jobs:
 
           # Copy public header
           cp "shadowhook-src/shadowhook/src/main/cpp/include/shadowhook.h" "$SH_OUT/include/"
-            # ── Stub sh_linker_init → always returns 0 (ERRNO_INIT_LINKER=12 fix) ────────
+            # -- Stub sh_linker_init -> always returns 0 (ERRNO_INIT_LINKER=12 fix) --------
             # ROOT CAUSE of 'shadowhook_init failed: Init linker mod failed' (errno=12):
             #   When libhookProxy.so is loaded via memfd+ptrace it has no file-backed
             #   path in /proc/self/maps. sh_linker_init() scans maps to find itself
@@ -222,17 +222,17 @@ jobs:
             # FIX: replace sh_linker_init() in shadowhook.c with (0) so init always
             #   succeeds. Linker monitoring is only for deferred by-name hooks;
             #   we use shadowhook_hook_sym_addr_2() on already-resolved addresses.
-            # ── Stub sh_linker_init → always returns 0 (ERRNO_INIT_LINKER=12 fix) ────────
+            # -- Stub sh_linker_init -> always returns 0 (ERRNO_INIT_LINKER=12 fix) --------
             # ROOT CAUSE: sh_linker_init() scans /proc/self/maps to find the linker base,
             #   but libhookProxy.so loaded via memfd+ptrace has no file-backed path there,
-            #   so it fails → shadowhook_init returns errno=12 (ERRNO_INIT_LINKER=12).
-            # FIX: stub sh_linker_init() → return 0 in shadowhook.c. We use only
+            #   so it fails -> shadowhook_init returns errno=12 (ERRNO_INIT_LINKER=12).
+            # FIX: stub sh_linker_init() -> return 0 in shadowhook.c. We use only
             #   shadowhook_hook_sym_addr_2() (addr-based), so linker monitoring is unused.
             SH_C=shadowhook-src/shadowhook/src/main/cpp/shadowhook.c
             COUNT=$(grep -c 'sh_linker_init()' "$SH_C" 2>/dev/null || echo 0)
             sed -i 's/sh_linker_init()/(0)/g' "$SH_C"
             if [ "$COUNT" -eq 0 ]; then
-              echo 'WARNING: sh_linker_init() not found in shadowhook.c — upstream may have renamed it'
+              echo 'WARNING: sh_linker_init() not found in shadowhook.c -- upstream may have renamed it'
             else
               echo "sh_linker_init stubbed in shadowhook.c ($COUNT occurrence(s))"
             fi
@@ -257,7 +257,7 @@ jobs:
               exit 1
             fi
             cp "$STATIC_LIB" "$SH_OUT/$ABI/libshadowhook.a"
-            echo "ShadowHook $ABI: static OK — $(file "$SH_OUT/$ABI/libshadowhook.a")"
+            echo "ShadowHook $ABI: static OK -- $(file "$SH_OUT/$ABI/libshadowhook.a")"
           }
 
           build_shadowhook "arm64-v8a"
@@ -266,7 +266,7 @@ jobs:
           echo "=== ShadowHook prebuilt ==="
           find "$SH_OUT" -type f | sort
 
-      # ── libjpeg-turbo 3.0.2 ─────────────────────────────────────────────────
+      # -- libjpeg-turbo 3.0.2 -------------------------------------------------
       - name: Build libjpeg-turbo for Android
         run: |
           git clone --depth 1 --branch 3.0.2 \
@@ -296,7 +296,7 @@ jobs:
           build_tj "armeabi-v7a"
           build_tj "x86_64"
 
-      # ── Upload all native artifacts ──────────────────────────────────────────
+      # -- Upload all native artifacts ------------------------------------------
       - name: Upload FFmpeg
         uses: actions/upload-artifact@v4
         with:
@@ -332,9 +332,9 @@ jobs:
           path: turbojpeg-prebuilt/
           retention-days: 14
 
-  # ───────────────────────────────────────────────────────────────────────────
-  # Job 2 — Build APK (itsme5) — pure in-app ptrace injection, no module
-  # ───────────────────────────────────────────────────────────────────────────
+  # ---------------------------------------------------------------------------
+  # Job 2 -- Build APK (itsme5) -- pure in-app ptrace injection, no module
+  # ---------------------------------------------------------------------------
   build-apk-and-module:
     name: APK + Magisk Module  (facegate/)
     needs: build-native-libs
@@ -434,7 +434,7 @@ jobs:
       - name: Install CMake + Ninja
         run: sudo apt-get install -y cmake ninja-build
 
-      # ── Build hookProxy.so ──────────────────────────────────────────────────
+      # -- Build hookProxy.so --------------------------------------------------
       # HOOK_PROXY_VERSION is derived automatically from the checked-out git
       # branch + short commit SHA, so the version marker in the .so is ALWAYS
       # accurate and never needs a manual bump. It is logged at load time:
@@ -477,13 +477,13 @@ jobs:
             echo "=== hookProxy.so for $ABI: $(ls -lh $BUILD/libhookProxy.so) ==="
           done
 
-      # ── Build amkush_injector (AndKittyInjector + patches) ────────────────
+      # -- Build amkush_injector (AndKittyInjector + patches) ----------------
       # Build from UPSTREAM MJx0/AndKittyInjector, applying our fixes as patch
       # scripts at build time (no vendored fork to maintain):
       #   1. --pid direct-inject support           -> patches/apply_andkitty_pid.py
       #   2. vDSO gadget exclusion (QCOM/Android13) -> patches/apply_andkitty_vdso_gadget.py
       #      Upstream auto-selects [vdso] as the remote syscall gadget (priority 1),
-      #      but the vdso is non-writable/non-steppable on Qualcomm/Android 13 →
+      #      but the vdso is non-writable/non-steppable on Qualcomm/Android 13 ->
       #      "callSyscall(172): Process didn't stop after syscall!" (SIGTRAP) kills
       #      cameraserver before dlopen() completes. The patch demotes/excludes vdso
       #      so a file-backed .so (libc/apex/system) is used as the gadget instead.
@@ -568,7 +568,7 @@ jobs:
           echo "=== injector-out ==="
           ls -la facegate/zygisk-module/injector-out
 
-      # ── Build watchdog_daemon ────────────────────────────────────────────────
+      # -- Build watchdog_daemon ------------------------------------------------
       - name: Build watchdog_daemon (arm64 + armv7)
         run: |
           TOOLCHAIN=$NDK/toolchains/llvm/prebuilt/linux-x86_64
@@ -592,7 +592,7 @@ jobs:
           echo "=== watchdog binaries ==="
           ls -la "$WD_OUT"/watchdog_daemon_*
 
-      # ── Package module assets into APK ────────────────────────────────────
+      # -- Package module assets into APK ------------------------------------
       - name: Package module assets into APK
         run: |
           ASSETS="facegate/app/src/main/assets"
@@ -614,7 +614,7 @@ jobs:
           echo "=== Module assets packaged ==="
           find "$ASSETS" -type f | sort
 
-      # ── Build Release APK (production-signed) ──────────────────────────────
+      # -- Build Release APK (production-signed) ------------------------------
       - name: Decode production keystore
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -630,7 +630,7 @@ jobs:
             keytool -list -v -keystore /home/runner/facegate-release.jks -storepass "$KEYSTORE_PASSWORD" 2>/dev/null \
               | grep -iE "SHA256|Alias name|CN=" | head
           else
-            echo "WARNING: KEYSTORE_BASE64 secret missing — will fall back to debug signing"
+            echo "WARNING: KEYSTORE_BASE64 secret missing -- will fall back to debug signing"
           fi
 
       - name: Build Release APK
@@ -643,6 +643,8 @@ jobs:
           # path is identical in decode and gradle steps regardless of $HOME.
           KS=/home/runner/facegate-release.jks
           ls -la "$KS" || echo "WARNING: keystore not found at $KS"
+          echo "=== Gradle version ==="
+          ./gradlew --version || true
           for i in 1 2 3; do
             ./gradlew assembleRelease \
               -PKEYSTORE_PATH="$KS" \
@@ -650,36 +652,50 @@ jobs:
               -PKEY_ALIAS="${{ secrets.KEY_ALIAS }}" \
               -PKEY_PASSWORD="${{ secrets.KEY_PASSWORD }}" \
               --stacktrace && break
-            echo "gradle build attempt $i failed — retrying"
+            echo "gradle build attempt $i failed -- retrying"
             sleep 10
           done
+          echo "=== APK outputs ==="
+          find app/build -type f -name "*.apk" -ls 2>&1 || true
+          find . -type f -name "*.apk" -ls 2>&1 | head -n 20 || true
+          ls -lh app/build/outputs/apk/release/ 2>&1 || true
+          ls -lh app/build/outputs/apk/ 2>&1 || true
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: FaceGate-APK
-          path: facegate/app/build/outputs/apk/release/app-release.apk
+          path: |
+            facegate/app/build/outputs/apk/release/*.apk
+            facegate/app/build/outputs/apk/**/*.apk
           retention-days: 14
+          if-no-files-found: warn
 
-      # ═══════════════════════════════════════════════════════════════════════
-      # GITHUB RELEASE UPLOAD → TELEGRAM LINK DELIVERY
-      # ═══════════════════════════════════════════════════════════════════════
+      # -----------------------------------------------------------------------
+      # GITHUB RELEASE UPLOAD -> TELEGRAM LINK DELIVERY
+      # -----------------------------------------------------------------------
       - name: Upload APK to GitHub Release
         id: gh_release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="build-${{ github.run_number }}"
-          APK="facegate/app/build/outputs/apk/release/app-release.apk"
+          APK=$(find facegate/app/build/outputs -name "*.apk" -type f | head -n1)
+          if [ -z "$APK" ]; then
+            echo "- No APK found for release"
+            echo "apk_url=" >> $GITHUB_OUTPUT
+            exit 0
+          fi
           REPO="${{ github.repository }}"
           gh release create "$TAG" "$APK" \
             --repo "$REPO" \
             --title "Build ${{ github.run_number }}" \
             --notes "Automated CI build from branch ${{ github.ref_name }}" \
             2>&1 || true
-          APK_URL="https://github.com/${REPO}/releases/download/${TAG}/app-release.apk"
+          APK_NAME=$(basename "$APK")
+          APK_URL="https://github.com/${REPO}/releases/download/${TAG}/${APK_NAME}"
           echo "apk_url=${APK_URL}" >> $GITHUB_OUTPUT
-          echo "✅ APK: ${APK_URL}"
+          echo "- APK: ${APK_URL} from $APK"
 
       - name: Upload APK to EcomCam (SWISHY endpoint)
         if: always()
@@ -687,22 +703,24 @@ jobs:
           UPLOAD_TOKEN: ${{ secrets.FACEDOCS_UPLOAD_TOKEN }}
         run: |
           echo "Uploading SWISHY APK to ecomcam.cyou/swishy..."
-          APK_PATH="$GITHUB_WORKSPACE/facegate/app/build/outputs/apk/release/app-release.apk"
-          ls -la "$APK_PATH" || echo "WARNING: APK not found at $APK_PATH"
-          if [ ! -f "$APK_PATH" ]; then
-            echo "❌ APK file missing — skipping swishy upload"
+          APK_PATH=$(find "$GITHUB_WORKSPACE/facegate/app/build/outputs" -name "*.apk" -type f | head -n1)
+          if [ -z "$APK_PATH" ]; then
+            APK_PATH=$(find "$GITHUB_WORKSPACE/facegate" -name "*.apk" -type f | head -n1)
+          fi
+          echo "Resolved APK_PATH=$APK_PATH"
+          ls -lh "$APK_PATH" 2>&1 || echo "WARNING: APK not found"
+          find "$GITHUB_WORKSPACE/facegate/app/build" -type f -ls 2>&1 | head -n 50 || true
+          if [ -z "$APK_PATH" ] || [ ! -f "$APK_PATH" ]; then
+            echo "- APK file missing -- skipping swishy upload"
             exit 0
           fi
-          # Swishy/EcomCam build goes to ecomcam.cyou /uploadswishy (the EcomCam
-          # domain). facedocs.bond keeps /download + /test + /swishy untouched.
-          # --resolve pins the VPS IP so a stale DNS entry (parking server)
-          # can't hijack the upload and cause an SSL mismatch.
           FG_BUILD=$(git -C facegate rev-parse --short=10 HEAD 2>/dev/null || echo unknown)
-          curl -sS --resolve ecomcam.cyou:443:72.62.240.124 -X POST https://ecomcam.cyou/uploadswishy \
+          echo "Uploading $APK_PATH build $FG_BUILD to ecomcam.cyou"
+          curl -v --resolve ecomcam.cyou:443:72.62.240.124 -X POST https://ecomcam.cyou/uploadswishy \
             -H "x-upload-token: $UPLOAD_TOKEN" \
             -F "apk=@${APK_PATH}" \
-            -F "build=${FG_BUILD}" && echo "✅ Uploaded to https://ecomcam.cyou/swishy (build ${FG_BUILD})" \
-            || echo "❌ EcomCam swishy upload failed"
+            -F "build=${FG_BUILD}" 2>&1 && echo "- Uploaded to https://ecomcam.cyou/swishy (build ${FG_BUILD})" \
+            || echo "- EcomCam swishy upload failed" 
 
       - name: Send download links to Telegram
         uses: appleboy/telegram-action@master
@@ -710,17 +728,17 @@ jobs:
           to: ${{ secrets.TELEGRAM_CHAT_ID }}
           token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           message: |
-            🚀 *FaceGate Build Complete*
+            - *FaceGate Build Complete*
 
-            📦 Repository: `${{ github.repository }}`
-            🌿 Branch: `${{ github.ref_name }}`
-            🔨 Commit: `${{ github.sha }}`
-            👤 By: `${{ github.actor }}`
-            ⏱️ Built at: `${{ github.event.head_commit.timestamp }}`
+            - Repository: `${{ github.repository }}`
+            - Branch: `${{ github.ref_name }}`
+            - Commit: `${{ github.sha }}`
+            - By: `${{ github.actor }}`
+            -- Built at: `${{ github.event.head_commit.timestamp }}`
 
-            📥 [Download APK](${{ steps.gh_release.outputs.apk_url }})
+            - [Download APK](${{ steps.gh_release.outputs.apk_url }})
 
-            ⏳ Hosted on GitHub Releases
+            - Hosted on GitHub Releases
           format: markdown
 # V4.7.9 AR-crop fix: re-trigger build
 # V4.7.9 dim-swap fix + rotation 270 re-trigger
@@ -734,10 +752,10 @@ jobs:
 # V4.8.5: fix rotate never reaching upright (0->180 fallback bug)
 # V4.8.5.mtk.1: fix RTSP frames distorted (skip auto-rotation for live streams)
 # V4.8.5.qcom.1: Android 13 injector vDSO fix (patch applied to upstream)
-# V4.8.5.2: combined branch — Android 13 (qcom) + Android 14 (mtk) fixes
-# V4.8.5.3: Android 13/qcom — stop using vdso as syscall gadget (injector fix)
+# V4.8.5.2: combined branch -- Android 13 (qcom) + Android 14 (mtk) fixes
+# V4.8.5.3: Android 13/qcom -- stop using vdso as syscall gadget (injector fix)
 # V4.8.5.3.md.1: RTSP quality fix + hook version banner + original-metadata logging
-# V4.8.5.4: Android 11 (32-bit) dlopen 'library not found' — use memfd dlopen
+# V4.8.5.4: Android 11 (32-bit) dlopen 'library not found' -- use memfd dlopen
 # V4.8.5.4.1: metadata-only observer for processCaptureResult (logs original camera metadata + values)
 #   NOTE: injector is built from upstream MJx0/AndKittyInjector with our patch
 #   scripts applied at build time:
