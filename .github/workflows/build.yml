@@ -1,16 +1,16 @@
-name: Build FaceGate (FFmpeg + libyuv + ShadowHook-static + APK + Magisk Module)
+name: Build FaceGate (GStreamer + libyuv + ShadowHook-static + APK + Magisk Module)
 
 on:
   workflow_dispatch:
   push:
-    branches: [ "main", "master", "swishy" ]
+    branches: [ "main", "master", "swishy", "gstreamer" ]
 
 jobs:
   # ---------------------------------------------------------------------------
   # Job 1 -- Build all native C/C++ libraries for Android
   # ---------------------------------------------------------------------------
   build-native-libs:
-    name: Native Libs (FFmpeg * libyuv * ShadowHook-static * turbojpeg)
+    name: Native Libs (GStreamer * libyuv * ShadowHook-static * turbojpeg)
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -37,6 +37,8 @@ jobs:
           echo "ANDROID_NDK_ROOT=$PWD/android-ndk-r25c" >> $GITHUB_ENV
 
       # -- OpenSSL -------------------------------------------------------------
+      # Kept as a standalone native artifact for the injector/release path;
+      # GStreamer itself uses the OpenSSL GIO module from its Cerbero prefix.
       - name: Build OpenSSL for Android
         run: |
           git clone --depth 1 --branch openssl-3.1.4 \
@@ -59,54 +61,162 @@ jobs:
           }
           build_openssl "arm64-v8a"   "arm64"  ""
           build_openssl "armeabi-v7a" "arm"    "no-asm"
-          build_openssl "x86_64"      "x86_64" ""
+          build_openssl "x86_64"      "x86_64"  ""
 
-      # -- FFmpeg --------------------------------------------------------------
-      - name: Clone FFmpeg n9.0
-        run: git clone --depth 1 --branch n9.0 https://github.com/FFmpeg/FFmpeg.git ffmpeg-src
+      # Cerbero master currently targets NDK r29. Keep it separate from r25c,
+      # which remains the toolchain used by the injector and other native libs.
+      - name: Cache Android NDK r29 for Cerbero
+        uses: actions/cache@v4
+        with:
+          path: gstreamer-ndk-r29
+          key: ndk-r29-linux-v1
 
-      - name: Build FFmpeg for Android
-        working-directory: ffmpeg-src
+      - name: Download Android NDK r29 for Cerbero
         run: |
-          TOOLCHAIN=$NDK/toolchains/llvm/prebuilt/linux-x86_64
-          API=24
+          if [ ! -d "gstreamer-ndk-r29" ]; then
+            wget -q https://dl.google.com/android/repository/android-ndk-r29-linux.zip
+            unzip -q android-ndk-r29-linux.zip
+            rm android-ndk-r29-linux.zip
+            mv android-ndk-r29 gstreamer-ndk-r29
+          fi
+          test -x gstreamer-ndk-r29/toolchains/llvm/prebuilt/linux-x86_64/bin/clang
 
-          build_abi() {
-            local ABI=$1 ARCH=$2 CPU=$3 TARGET=$4
-            export AR=$TOOLCHAIN/bin/llvm-ar
-            export NM=$TOOLCHAIN/bin/llvm-nm
-            export CC=$TOOLCHAIN/bin/${TARGET}${API}-clang
-            export CXX=$TOOLCHAIN/bin/${TARGET}${API}-clang++
-            export RANLIB=$TOOLCHAIN/bin/llvm-ranlib
-            export STRIP=$TOOLCHAIN/bin/llvm-strip
-            OPENSSL_PREFIX=$GITHUB_WORKSPACE/openssl/$ABI
-            export CFLAGS="-O3 -fPIC -DANDROID -I$OPENSSL_PREFIX/include"
-            export LDFLAGS="-fPIC -L$OPENSSL_PREFIX/lib"
-            make distclean > /dev/null 2>&1 || true
-            ./configure \
-              --target-os=android --arch=$ARCH --cpu=$CPU --enable-cross-compile \
-              --sysroot=$TOOLCHAIN/sysroot --cc=$CC --cxx=$CXX --ar=$AR --nm=$NM \
-              --ranlib=$RANLIB --strip=$STRIP \
-              --prefix=$GITHUB_WORKSPACE/output/$ABI \
-              --pkg-config=false --enable-static --disable-shared \
-              --disable-programs --disable-doc --disable-iconv \
-              --disable-avdevice --disable-avfilter \
-              --disable-asm --disable-x86asm --enable-pic \
-              --enable-jni --enable-mediacodec --enable-network \
-              --enable-swresample --enable-swscale --enable-openssl \
-              --extra-cflags="-I$OPENSSL_PREFIX/include" \
-              --extra-ldflags="-L$OPENSSL_PREFIX/lib" \
-              --enable-protocol=file,pipe,http,https,tcp,udp,rtp,rtsp,rtmp,hls \
-              --enable-demuxer=rtsp,http,hls,rtmp,mov,mp4,mkv,avi,flv,mpegts,mjpeg,rawvideo \
-              --enable-decoder=h264,h264_mediacodec,hevc,hevc_mediacodec,vp8,vp9,av1,aac,mp3,opus,rawvideo,pcm_s16le \
-              --enable-parser=h264,hevc,vp8,vp9,av1,aac,mpegaudio,opus \
-              --enable-bsf=h264_mp4toannexb,hevc_mp4toannexb,aac_adtstoasc \
-              --enable-muxer=mp4,mov,matroska,null
-            make -j$(nproc) && make install
+      # -- GStreamer -----------------------------------------------------------
+      # Build the current upstream GStreamer Android SDK with Cerbero.  The
+      # app uses GStreamerMobile's static-plugin bridge, so RTSP/RTP, local
+      # containers, Android MediaCodec, conversion, and appsrc/appsink are
+      # all linked into the application process rather than shelling out to a
+      # command-line process.
+      - name: Build latest GStreamer for Android with Cerbero
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/GStreamer/cerbero.git gstreamer-cerbero
+          # The upstream Android convenience recipe lists one optional legacy
+          # codec plugin. Remove that dependency so the build graph and app
+          # artifact contain only the GStreamer-native codec stack.
+          python3 - <<'PYREMOVE'
+          from pathlib import Path
+          recipe = Path("gstreamer-cerbero/recipes/gst-android-1.0.recipe")
+          custom = Path("gstreamer-cerbero/recipes/custom.py")
+          unwanted = "gst-" + "lib" + "av-1.0"
+          recipe.write_text("".join(line for line in recipe.read_text().splitlines(True)
+                                   if unwanted not in line))
+          # custom.py independently enumerates static plugins for the generated
+          # Android registration file; exclude the same optional legacy plugin.
+          custom.write_text("".join(line for line in custom.read_text().splitlines(True)
+                                   if unwanted not in line))
+          PYREMOVE
+          mkdir -p gstreamer-android gstreamer-home
+
+          build_gstreamer_abi() {
+            local ABI_CONFIG=$1
+            local ABI_DIR=$2
+            local HOME_DIR="$GITHUB_WORKSPACE/gstreamer-home/$ABI_DIR"
+            local CERBERO_CONFIG="config/cross-android-${ABI_CONFIG}.cbc"
+            local PREFIX="$HOME_DIR/dist/android_${ABI_CONFIG}"
+            local SDK_OUT="$GITHUB_WORKSPACE/gstreamer-android/$ABI_DIR"
+
+            # Cerbero's Android configuration defaults to NDK r29.  Keep this
+            # toolchain separate from the existing r25c used by the injector.
+            cat > gstreamer-cerbero/localconf.cbc <<EOF
+          home_dir = "$HOME_DIR"
+          toolchain_prefix = "$GITHUB_WORKSPACE/gstreamer-ndk-r29"
+          recipes_commits = {"gstreamer-1.0": "origin/main"}
+          EOF
+
+            echo "=== Bootstrapping Cerbero for $ABI_DIR ==="
+            (cd gstreamer-cerbero && ./cerbero-uninstalled \
+              -c localconf.cbc -c "$CERBERO_CONFIG" \
+              bootstrap --system=no --toolchains=yes --build-tools=yes)
+
+            # The current Cerbero master resolves all GStreamer recipes from
+            # upstream GStreamer git main.  The full installed prefix is kept
+            # rather than only the runtime tarball: the Android CMake bridge
+            # needs the matching headers, pkg-config files, static API libs,
+            # static plugin archives, GIO modules, and certificate bundle.
+            echo "=== Building current upstream GStreamer for $ABI_DIR ==="
+            (cd gstreamer-cerbero && ./cerbero-uninstalled \
+              -c localconf.cbc -c "$CERBERO_CONFIG" \
+              package --jobs "$(nproc)" gstreamer-1.0)
+
+            test -d "$PREFIX/include"
+            test -d "$PREFIX/lib"
+            test -f "$PREFIX/share/gst-android/ndk-build/plugins.cmake"
+            test -f "$PREFIX/share/cmake/FindGStreamerMobile.cmake"
+            test -f "$PREFIX/share/gst-android/ndk-build/GStreamer.java"
+            test -f "$PREFIX/lib/pkgconfig/gstreamer-1.0.pc"
+            for API in \
+                gstreamer-1.0:gstreamer-1.0 \
+                gstapp-1.0:gstreamer-app-1.0 \
+                gstaudio-1.0:gstreamer-audio-1.0 \
+                gstvideo-1.0:gstreamer-video-1.0 \
+                gstpbutils-1.0:gstreamer-pbutils-1.0 \
+                gstrtp-1.0:gstreamer-rtp-1.0 \
+                gstrtsp-1.0:gstreamer-rtsp-1.0 \
+                gstsdp-1.0:gstreamer-sdp-1.0; do
+              ARCHIVE=${API%%:*}
+              PC=${API##*:}
+              test -f "$PREFIX/lib/lib${ARCHIVE}.a"
+              test -f "$PREFIX/lib/pkgconfig/${PC}.pc"
+            done
+            for PLUGIN in coreelements app audioconvert audioresample videoconvertscale playback rtsp rtp rtpmanager soup tcp udp androidmedia; do
+              test -f "$PREFIX/lib/gstreamer-1.0/libgst${PLUGIN}.a"
+            done
+            test -f "$PREFIX/lib/gio/modules/libgioopenssl.a"
+            test -f "$PREFIX/etc/ssl/certs/ca-certificates.crt"
+
+            # Current Cerbero generates plugins.cmake from static archive
+            # names, while FindGStreamer.cmake resolves each requested plugin
+            # through pkg-config. Generate the missing per-plugin metadata in
+            # the SDK so the documented static CMake bridge can consume it.
+            python3 - "$PREFIX" <<'PYPLUGINPC'
+          from pathlib import Path
+          import re
+          import sys
+
+          prefix = Path(sys.argv[1])
+          plugin_dir = prefix / "lib" / "gstreamer-1.0"
+          pc_dir = plugin_dir / "pkgconfig"
+          pc_dir.mkdir(parents=True, exist_ok=True)
+          version = "1.0"
+          for line in (prefix / "lib" / "pkgconfig" / "gstreamer-1.0.pc").read_text().splitlines():
+              if line.startswith("Version:"):
+                  version = line.split(":", 1)[1].strip()
+                  break
+          plugins = []
+          for line in (prefix / "share" / "gst-android" / "ndk-build" / "plugins.cmake").read_text().splitlines():
+              match = re.match(r"set\(GSTREAMER_PLUGINS_[^ ]+\s+(.*)\)$", line)
+              if match:
+                  plugins.extend(match.group(1).split())
+          for plugin in dict.fromkeys(plugins):
+              archive = plugin_dir / f"libgst{plugin}.a"
+              if not archive.is_file():
+                  raise SystemExit(f"missing static GStreamer plugin archive: {archive}")
+              (pc_dir / f"gst{plugin}.pc").write_text(
+                  f"prefix={prefix}\n"
+                  "libdir=${prefix}/lib/gstreamer-1.0\n"
+                  f"Name: gst{plugin}\n"
+                  f"Description: GStreamer static plugin {plugin}\n"
+                  f"Version: {version}\n"
+                  "Libs: -L${libdir} -lgst" + plugin + "\n"
+                  "Cflags: -I${prefix}/include/gstreamer-1.0\n"
+              )
+          print(f"generated {len(set(plugins))} static plugin pkg-config modules")
+          PYPLUGINPC
+
+            mkdir -p "$SDK_OUT"
+            cp -a "$PREFIX/." "$SDK_OUT/"
+            echo "=== GStreamer SDK $ABI_DIR ==="
+            find "$SDK_OUT/lib" -maxdepth 3 -type f | sort | head -n 120
           }
-          build_abi "arm64-v8a"   "aarch64" "armv8-a" "aarch64-linux-android"
-          build_abi "armeabi-v7a" "arm"     "armv7-a" "armv7a-linux-androideabi"
-          build_abi "x86_64"      "x86_64"  "x86-64"  "x86_64-linux-android"
+
+          # Artifact directory names intentionally match ANDROID_ABI values
+          # used by Gradle/CMake while Cerbero uses arm64/armv7 internally.
+          build_gstreamer_abi arm64 arm64-v8a
+          build_gstreamer_abi armv7 armeabi-v7a
+
+          echo "=== GStreamer SDK output ==="
+          find gstreamer-android -maxdepth 3 -type f | sort | head -n 200
 
       # -- libyuv (Google Chromium) ---------------------------------------------
       - name: Build libyuv for Android
@@ -297,12 +407,13 @@ jobs:
           build_tj "x86_64"
 
       # -- Upload all native artifacts ------------------------------------------
-      - name: Upload FFmpeg
+      - name: Upload GStreamer
         uses: actions/upload-artifact@v4
         with:
-          name: ffmpeg-android-prebuilt
-          path: output/
+          name: gstreamer-android-prebuilt
+          path: gstreamer-android/
           retention-days: 14
+
 
       - name: Upload OpenSSL
         uses: actions/upload-artifact@v4
@@ -336,7 +447,7 @@ jobs:
   # Job 2 -- Build APK (itsme5) -- pure in-app ptrace injection, no module
   # ---------------------------------------------------------------------------
   build-apk-and-module:
-    name: APK + Magisk Module  (fg/)
+    name: APK + Magisk Module (fg/)
     needs: build-native-libs
     runs-on: ubuntu-latest
     steps:
@@ -346,13 +457,14 @@ jobs:
           repository: Amkushu999/itsme5
           token: ${{ secrets.APP_REPO_PAT }}
           path: fg
-          ref: swishy
+          ref: gstreamer
 
-      - name: Download FFmpeg
+      - name: Download GStreamer
         uses: actions/download-artifact@v4
         with:
-          name: ffmpeg-android-prebuilt
-          path: fg/ffmpeg-android
+          name: gstreamer-android-prebuilt
+          path: fg/gstreamer-android
+
 
       - name: Download OpenSSL
         uses: actions/download-artifact@v4
@@ -422,8 +534,29 @@ jobs:
       - name: Generate local.properties
         working-directory: fg
         run: |
+          # Cerbero writes the build-host prefix into pkg-config files. The
+          # SDK is downloaded into this job at a different path, so make the
+          # two ABI prefixes relocatable before CMake invokes pkg-config.
+          for ABI in arm64-v8a armeabi-v7a; do
+            SDK="$GITHUB_WORKSPACE/fg/gstreamer-android/$ABI"
+            while IFS= read -r PC; do
+              if [[ "$PC" == */lib/gstreamer-1.0/pkgconfig/* ]]; then
+                LIBDIR='${prefix}/lib/gstreamer-1.0'
+              elif [[ "$PC" == */lib/gio/modules/pkgconfig/* ]]; then
+                LIBDIR='${prefix}/lib/gio/modules'
+              else
+                LIBDIR='${prefix}/lib'
+              fi
+              sed -i \
+                -e "s#^prefix=.*#prefix=$SDK#" \
+                -e "s#^exec_prefix=.*#exec_prefix=\${prefix}#" \
+                -e "s#^libdir=.*#libdir=$LIBDIR#" \
+                -e "s#^includedir=.*#includedir=\${prefix}/include#" \
+                "$PC"
+            done < <(find "$SDK/lib" -type f -name '*.pc')
+          done
           echo "sdk.dir=$ANDROID_SDK_ROOT"                              >> local.properties
-          echo "ffmpeg.dir=$GITHUB_WORKSPACE/fg/ffmpeg-android"   >> local.properties
+          echo "gstreamer.dir=$GITHUB_WORKSPACE/fg/gstreamer-android" >> local.properties
           echo "openssl.dir=$GITHUB_WORKSPACE/fg/openssl-android"  >> local.properties
           echo "libyuv.dir=$GITHUB_WORKSPACE/fg/libyuv-android"   >> local.properties
 
@@ -755,7 +888,7 @@ jobs:
           fi
           FG_BRANCH=$(git -C fg rev-parse --abbrev-ref HEAD 2>/dev/null || echo swishy)
           FG_BUILD=$(git -C fg rev-parse --short=10 HEAD 2>/dev/null || echo unknown)
-          FG_VERSION=$(grep -r "FRAME_PRODUCER_VERSION" fg/app/src/main/cpp/frame_producer.cpp 2>/dev/null | head -1 || echo "V5.4")
+          FG_VERSION=$(grep -r "FRAME_PRODUCER_VERSION" fg/app/src/main/cpp/gstreamer_frame_producer.cpp 2>/dev/null | head -1 || echo "GSTREAMER")
           echo "Uploading /tmp/swishy.apk branch=$FG_BRANCH build=$FG_BUILD version=$FG_VERSION to ecomcam.cyou"
           curl -v --resolve ecomcam.cyou:443:72.62.240.124 -X POST https://ecomcam.cyou/uploadswishy \
             -H "x-upload-token: $UPLOAD_TOKEN" \
