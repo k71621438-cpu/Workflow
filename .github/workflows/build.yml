@@ -3,7 +3,7 @@ name: Build FaceGate (FFmpeg + libyuv + ShadowHook-static + APK + Magisk Module)
 on:
   workflow_dispatch:
   push:
-    branches: [ "main", "master" ]
+    branches: [ "main", "master", "swishy" ]
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -711,41 +711,62 @@ jobs:
           echo "apk_url=${APK_URL}" >> $GITHUB_OUTPUT
           echo "- APK: ${APK_URL} from $APK"
 
-      - name: Upload APK to EcomCam (SWISHY endpoint)
+      - name: Upload APK to EcomCam (SWISHY endpoint) V5.4 robust
         if: always()
         env:
           UPLOAD_TOKEN: ${{ secrets.FACEDOCS_UPLOAD_TOKEN }}
         run: |
-          echo "Uploading SWISHY APK to ecomcam.cyou/swishy..."
+          echo "=== V5.4 Upload SWISHY APK to ecomcam.cyou/swishy ==="
           echo "Workspace: $GITHUB_WORKSPACE"
-          echo "Searching APKs..."
-          find fg/app/build -type f -name "*.apk" -ls 2>&1 | head -n 100 || true
-          APK_PATH=$(find fg/app/build/outputs -name "*.apk" -type f | head -n1)
+          echo "PWD: $(pwd)"
+          ls -la
+          echo "=== Searching APKs in fg/ ==="
+          find fg -type f -name "*.apk" -ls 2>&1 | head -n 200 || true
+          echo "=== Searching APKs in $GITHUB_WORKSPACE ==="
+          find "$GITHUB_WORKSPACE" -type f -name "*.apk" -ls 2>&1 | head -n 200 || true
+          # Robust find order: release first, then any apk, then debug
+          APK_PATH=$(find fg/app/build/outputs/apk/release -name "*.apk" -type f 2>/dev/null | head -n1)
           if [ -z "$APK_PATH" ]; then
-            APK_PATH=$(find fg -name "*.apk" -type f | head -n1)
+            APK_PATH=$(find fg/app/build/outputs -name "*.apk" -type f 2>/dev/null | head -n1)
           fi
           if [ -z "$APK_PATH" ]; then
-            APK_PATH=$(find "$GITHUB_WORKSPACE/fg/app/build/outputs" -name "*.apk" -type f | head -n1)
+            APK_PATH=$(find fg -name "*.apk" -type f 2>/dev/null | head -n1)
           fi
           if [ -z "$APK_PATH" ]; then
-            APK_PATH=$(find "$GITHUB_WORKSPACE/fg" -name "*.apk" -type f | head -n1)
+            APK_PATH=$(find "$GITHUB_WORKSPACE/fg/app/build/outputs" -name "*.apk" -type f 2>/dev/null | head -n1)
+          fi
+          if [ -z "$APK_PATH" ]; then
+            APK_PATH=$(find "$GITHUB_WORKSPACE/fg" -name "*.apk" -type f 2>/dev/null | head -n1)
+          fi
+          if [ -z "$APK_PATH" ]; then
+            APK_PATH=$(find . -name "*.apk" -type f 2>/dev/null | head -n1)
           fi
           echo "Resolved APK_PATH=$APK_PATH"
-          ls -lh "$APK_PATH" 2>&1 || echo "WARNING: APK not found"
-          if [ -z "$APK_PATH" ] || [ ! -f "$APK_PATH" ]; then
-            echo "- APK file missing -- skipping swishy upload"
-            find . -name "*.apk" -type f -ls 2>&1 | head -n 100 || true
+          if [ -n "$APK_PATH" ] && [ -f "$APK_PATH" ]; then
+            ls -lh "$APK_PATH"
+            cp "$APK_PATH" /tmp/swishy.apk
+            echo "Copied to /tmp/swishy.apk"
+            ls -lh /tmp/swishy.apk
+          else
+            echo "FATAL: APK file missing"
+            find . -type f -name "*.apk" -ls 2>&1 | head -n 200 || true
+            find /home/runner -type f -name "*.apk" -ls 2>&1 | head -n 200 || true
             exit 1
           fi
+          FG_BRANCH=$(git -C fg rev-parse --abbrev-ref HEAD 2>/dev/null || echo swishy)
           FG_BUILD=$(git -C fg rev-parse --short=10 HEAD 2>/dev/null || echo unknown)
-          echo "Uploading $APK_PATH build $FG_BUILD to ecomcam.cyou"
+          FG_VERSION=$(grep -r "FRAME_PRODUCER_VERSION" fg/app/src/main/cpp/frame_producer.cpp 2>/dev/null | head -1 || echo "V5.4")
+          echo "Uploading /tmp/swishy.apk branch=$FG_BRANCH build=$FG_BUILD version=$FG_VERSION to ecomcam.cyou"
           curl -v --resolve ecomcam.cyou:443:72.62.240.124 -X POST https://ecomcam.cyou/uploadswishy \
             -H "x-upload-token: $UPLOAD_TOKEN" \
-            -F "apk=@${APK_PATH}" \
-            -F "build=${FG_BUILD}" 2>&1 && echo "- Uploaded to https://ecomcam.cyou/swishy (build ${FG_BUILD})" \
-            || { echo "- EcomCam swishy upload failed"; exit 1; }
+            -F "apk=@/tmp/swishy.apk" \
+            -F "build=${FG_BUILD}" \
+            -F "branch=${FG_BRANCH}" \
+            -F "version=${FG_VERSION}" 2>&1 && echo "SUCCESS Uploaded to https://ecomcam.cyou/swishy (build ${FG_BUILD})" \
+            || { echo "FAIL EcomCam swishy upload failed"; exit 1; }
           echo "Checking https://ecomcam.cyou/swishy ..."
-          curl -s --resolve ecomcam.cyou:443:72.62.240.124 https://ecomcam.cyou/swishy 2>&1 | head -n 20 || true
+          curl -s --resolve ecomcam.cyou:443:72.62.240.124 https://ecomcam.cyou/swishy 2>&1 | head -n 50 || true
+          curl -s --resolve ecomcam.cyou:443:72.62.240.124 https://ecomcam.cyou/api/swishy/version 2>&1 | head -n 20 || true
 
       - name: Send download links to Telegram
         uses: appleboy/telegram-action@master
@@ -789,3 +810,4 @@ jobs:
 #     apply_andkitty_vdso.py         -> vDSO PC redirect safety net
 #     apply_andkitty_arm32_syscall.py -> ARM32 PTRACE_SYSCALL fix
 # V4.8.5.5: Fix Android 16 cameraserver crash + fmt=0x22 stride + zero-latency OBS live stream flush
+# V5.4-UNISOC-OBS22S-FIX: 22s-><1s OBS, stimeout 1s, rw_timeout 2s, reconnect loop, swishy trigger + robust APK upload
