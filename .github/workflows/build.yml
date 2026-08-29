@@ -107,12 +107,12 @@ jobs:
           # Keep the Android SDK on GStreamer-native codecs. The generic
           # upstream package also references gst-libav through gst-android and
           # dump-versions; remove those package-only references so FFmpeg is not
-          # pulled into this branch or its artifacts.
-          unwanted = "gst-" + "lib" + "av-1.0"
+          # pulled into this branch or its artifacts. Replace the dependency
+          # token in-place so dump-versions keeps valid Python list syntax.
+          unwanted = "'gst-" + "lib" + "av-1.0',"
           for name in ("gst-android-1.0.recipe", "dump-versions.recipe", "custom.py"):
               recipe = Path("gstreamer-cerbero/recipes") / name
-              recipe.write_text("".join(line for line in recipe.read_text().splitlines(True)
-                                       if unwanted not in line))
+              recipe.write_text(recipe.read_text().replace(unwanted, ""))
 
           # Cerbero's current WebRTC AudioProcessing recipe still points at the
           # retired freedesktop.org download path for version 2.1. Keep the
