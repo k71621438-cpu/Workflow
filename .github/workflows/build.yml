@@ -537,14 +537,23 @@ jobs:
           name: gstreamer-android-prebuilt
           path: fg/gstreamer-android
 
-      - name: Reuse compatible GStreamer artifact
-        if: ${{ inputs.reuse_gstreamer_run_id != 'fresh' }}
+      - name: Reuse compatible GStreamer artifact (default run)
+        if: ${{ inputs.reuse_gstreamer_run_id == '' }}
         uses: actions/download-artifact@v4
         with:
           name: gstreamer-android-prebuilt
           path: fg/gstreamer-android
           github-token: ${{ github.token }}
-          run-id: ${{ inputs.reuse_gstreamer_run_id || '33233745525' }}
+          run-id: 33233745525
+
+      - name: Reuse compatible GStreamer artifact (selected run)
+        if: ${{ inputs.reuse_gstreamer_run_id != '' && inputs.reuse_gstreamer_run_id != 'fresh' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: gstreamer-android-prebuilt
+          path: fg/gstreamer-android
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.reuse_gstreamer_run_id }}
 
       - name: Download OpenSSL
         uses: actions/download-artifact@v4
