@@ -4,12 +4,12 @@ on:
   workflow_dispatch:
     inputs:
       reuse_gstreamer_run_id:
-        description: "Reuse the GStreamer artifact from an earlier Workflow run"
+        description: "Blank reuses run 33233745525; enter fresh to rebuild current GStreamer"
         required: false
         type: string
         default: ""
   push:
-    branches: [ "main", "master", "swishy", "gstreamer" ]
+    branches: [ "main", "master", "gstreamer.2" ]
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -72,14 +72,14 @@ jobs:
       # Cerbero master currently targets NDK r29. Keep it separate from r25c,
       # which remains the toolchain used by the injector and other native libs.
       - name: Cache Android NDK r29 for Cerbero
-        if: ${{ inputs.reuse_gstreamer_run_id == '' }}
+        if: ${{ inputs.reuse_gstreamer_run_id == 'fresh' }}
         uses: actions/cache@v4
         with:
           path: gstreamer-ndk-r29
           key: ndk-r29-linux-v1
 
       - name: Download Android NDK r29 for Cerbero
-        if: ${{ inputs.reuse_gstreamer_run_id == '' }}
+        if: ${{ inputs.reuse_gstreamer_run_id == 'fresh' }}
         run: |
           if [ ! -d "gstreamer-ndk-r29" ]; then
             wget -q https://dl.google.com/android/repository/android-ndk-r29-linux.zip
@@ -90,13 +90,16 @@ jobs:
           test -x gstreamer-ndk-r29/toolchains/llvm/prebuilt/linux-x86_64/bin/clang
 
       # -- GStreamer -----------------------------------------------------------
+      # By default gstreamer.2 reuses the compatible multi-ABI SDK from run
+      # 33233745525. Dispatch with reuse_gstreamer_run_id=fresh when a new
+      # current-upstream Cerbero build is required.
       # Build the current upstream GStreamer Android SDK with Cerbero.  The
       # app uses GStreamerMobile's static-plugin bridge, so RTSP/RTP, local
       # containers, Android MediaCodec, conversion, and appsrc/appsink are
       # all linked into the application process rather than shelling out to a
       # command-line process.
       - name: Build latest GStreamer for Android with Cerbero
-        if: ${{ inputs.reuse_gstreamer_run_id == '' }}
+        if: ${{ inputs.reuse_gstreamer_run_id == 'fresh' }}
         run: |
           set -euo pipefail
           git clone --depth 1 https://github.com/GStreamer/cerbero.git gstreamer-cerbero
@@ -475,7 +478,7 @@ jobs:
 
       # -- Upload all native artifacts ------------------------------------------
       - name: Upload GStreamer
-        if: ${{ inputs.reuse_gstreamer_run_id == '' }}
+        if: ${{ inputs.reuse_gstreamer_run_id == 'fresh' }}
         uses: actions/upload-artifact@v4
         with:
           name: gstreamer-android-prebuilt
@@ -525,23 +528,23 @@ jobs:
           repository: Amkushu999/itsme5
           token: ${{ secrets.APP_REPO_PAT }}
           path: fg
-          ref: gstreamer
+          ref: gstreamer.2
 
       - name: Download GStreamer from this run
-        if: ${{ inputs.reuse_gstreamer_run_id == '' }}
+        if: ${{ inputs.reuse_gstreamer_run_id == 'fresh' }}
         uses: actions/download-artifact@v4
         with:
           name: gstreamer-android-prebuilt
           path: fg/gstreamer-android
 
-      - name: Reuse GStreamer from an earlier run
-        if: ${{ inputs.reuse_gstreamer_run_id != '' }}
+      - name: Reuse compatible GStreamer artifact
+        if: ${{ inputs.reuse_gstreamer_run_id != 'fresh' }}
         uses: actions/download-artifact@v4
         with:
           name: gstreamer-android-prebuilt
           path: fg/gstreamer-android
           github-token: ${{ github.token }}
-          run-id: ${{ inputs.reuse_gstreamer_run_id }}
+          run-id: ${{ inputs.reuse_gstreamer_run_id || '33233745525' }}
 
       - name: Download OpenSSL
         uses: actions/download-artifact@v4
@@ -906,27 +909,31 @@ jobs:
           TAG="build-${{ github.run_number }}"
           echo "Searching for APK..."
           find fg/app/build -name "*.apk" -type f -ls || true
-          APK=$(find fg/app/build/outputs -name "*.apk" -type f | head -n1)
-          if [ -z "$APK" ]; then
-            APK=$(find fg -name "*.apk" -type f | head -n1)
+          mapfile -t APKS < <(find fg/app/build/outputs -name "*.apk" -type f | sort)
+          if [ "${#APKS[@]}" -eq 0 ]; then
+            mapfile -t APKS < <(find fg -name "*.apk" -type f | sort)
           fi
-          if [ -z "$APK" ]; then
+          if [ "${#APKS[@]}" -eq 0 ]; then
             echo "- No APK found for release"
             echo "apk_url=" >> $GITHUB_OUTPUT
             exit 0
           fi
-          echo "Found APK: $APK"
-          ls -lh "$APK"
+          echo "Found split APKs:"
+          printf '  %s\n' "${APKS[@]}"
+          ls -lh "${APKS[@]}"
           REPO="${{ github.repository }}"
-          gh release create "$TAG" "$APK" \
+          # Attach every ABI split to the release. The first URL remains the
+          # backward-compatible primary output while the release contains both.
+          gh release create "$TAG" "${APKS[@]}" \
             --repo "$REPO" \
             --title "Build ${{ github.run_number }}" \
             --notes "Automated CI build from branch ${{ github.ref_name }}" \
             2>&1 || true
-          APK_NAME=$(basename "$APK")
+          APK_NAME=$(basename "${APKS[0]}")
           APK_URL="https://github.com/${REPO}/releases/download/${TAG}/${APK_NAME}"
           echo "apk_url=${APK_URL}" >> $GITHUB_OUTPUT
-          echo "- APK: ${APK_URL} from $APK"
+          echo "- Primary split APK: ${APK_URL}"
+          echo "- All ABI splits are attached to the release"
 
       - name: Upload APK to EcomCam (SWISHY endpoint) V5.4 robust
         if: always()
