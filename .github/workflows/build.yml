@@ -91,20 +91,56 @@ jobs:
         run: |
           set -euo pipefail
           git clone --depth 1 https://github.com/GStreamer/cerbero.git gstreamer-cerbero
-          # The upstream Android convenience recipe lists one optional legacy
-          # codec plugin. Remove that dependency so the build graph and app
-          # artifact contain only the GStreamer-native codec stack.
+          # Keep the Android SDK on GStreamer-native codecs. The generic
+          # upstream package also references gst-libav through gst-android and
+          # dump-versions; remove those package-only references so FFmpeg is not
+          # pulled into this branch or its artifacts.
+          #
+          # The current Cerbero recipe still points at the retired
+          # freedesktop.org download path for WebRTC AudioProcessing 2.1.
+          # Keep the WebRTC plugin available, but use its current GitLab release
+          # archive and matching extracted directory/checksum.
           python3 - <<'PYREMOVE'
           from pathlib import Path
-          recipe = Path("gstreamer-cerbero/recipes/gst-android-1.0.recipe")
-          custom = Path("gstreamer-cerbero/recipes/custom.py")
+          import re
+
+          # Keep the Android SDK on GStreamer-native codecs. The generic
+          # upstream package also references gst-libav through gst-android and
+          # dump-versions; remove those package-only references so FFmpeg is not
+          # pulled into this branch or its artifacts.
           unwanted = "gst-" + "lib" + "av-1.0"
-          recipe.write_text("".join(line for line in recipe.read_text().splitlines(True)
-                                   if unwanted not in line))
-          # custom.py independently enumerates static plugins for the generated
-          # Android registration file; exclude the same optional legacy plugin.
-          custom.write_text("".join(line for line in custom.read_text().splitlines(True)
-                                   if unwanted not in line))
+          for name in ("gst-android-1.0.recipe", "dump-versions.recipe", "custom.py"):
+              recipe = Path("gstreamer-cerbero/recipes") / name
+              recipe.write_text("".join(line for line in recipe.read_text().splitlines(True)
+                                       if unwanted not in line))
+
+          # Cerbero's current WebRTC AudioProcessing recipe still points at the
+          # retired freedesktop.org download path for version 2.1. Keep the
+          # plugin enabled, but use its current GitLab release archive.
+          webrtc = Path("gstreamer-cerbero/recipes/webrtc-audio-processing.recipe")
+          recipe_text = webrtc.read_text()
+          recipe_text, count = re.subn(
+              r"url = 'https://freedesktop\.org/software/pulseaudio/%\(name\)s/%\(name\)s-%\(version\)s\.tar\.gz'",
+              "url = 'https://gitlab.freedesktop.org/pulseaudio/webrtc-audio-processing/-/archive/v%(version)s/webrtc-audio-processing-v%(version)s.tar.gz'",
+              recipe_text,
+          )
+          if count != 1:
+              raise SystemExit("could not update WebRTC AudioProcessing source URL")
+          recipe_text, count = re.subn(
+              r"    tarball_checksum = '[0-9a-f]+'",
+              "    tarball_checksum = '2358883a8551711f3b6169f6799c003dc1a6efd37bdb24a135a015cc9e3d7713'",
+              recipe_text,
+          )
+          if count != 1:
+              raise SystemExit("could not update WebRTC AudioProcessing checksum")
+          if "tarball_dirname" not in recipe_text:
+              recipe_text = recipe_text.replace(
+                  "    stype = SourceType.TARBALL\n",
+                  "    stype = SourceType.TARBALL\n"
+                  "    tarball_dirname = 'webrtc-audio-processing-v%(version)s'\n",
+                  1,
+              )
+          webrtc.write_text(recipe_text)
           PYREMOVE
           mkdir -p gstreamer-android gstreamer-home
 
