@@ -141,6 +141,26 @@ jobs:
                   1,
               )
           webrtc.write_text(recipe_text)
+
+          # zlib.net served a zlib-1.3.1 tarball with bytes that do not match
+          # Cerbero's recorded checksum on the GitHub runner. Use the stable
+          # upstream GitHub tag archive instead; it has the same source tree
+          # and a reproducible checksum.
+          zlib = Path("gstreamer-cerbero/recipes/zlib.recipe")
+          zlib_text = zlib.read_text()
+          old_zlib_url = "url = 'https://zlib.net/fossils/zlib-%(version)s.tar.gz'"
+          new_zlib_url = "url = 'https://github.com/madler/zlib/archive/refs/tags/v%(version)s.tar.gz'"
+          if old_zlib_url not in zlib_text:
+              raise SystemExit("could not update zlib source URL")
+          zlib_text = zlib_text.replace(old_zlib_url, new_zlib_url, 1)
+          zlib_text, count = re.subn(
+              r"    tarball_checksum = '[0-9a-f]+'",
+              "    tarball_checksum = '17e88863f3600672ab49182f217281b6fc4d3c762bde361935e436a95214d05c'",
+              zlib_text,
+          )
+          if count != 1:
+              raise SystemExit("could not update zlib checksum")
+          zlib.write_text(zlib_text)
           PYREMOVE
           mkdir -p gstreamer-android gstreamer-home
 
@@ -243,7 +263,9 @@ jobs:
             mkdir -p "$SDK_OUT"
             cp -a "$PREFIX/." "$SDK_OUT/"
             echo "=== GStreamer SDK $ABI_DIR ==="
-            find "$SDK_OUT/lib" -maxdepth 3 -type f | sort | head -n 120
+            # Use sed instead of head so pipefail does not treat sort's
+            # expected SIGPIPE as a build failure when the SDK has >120 files.
+            find "$SDK_OUT/lib" -maxdepth 3 -type f | sort | sed -n '1,120p'
           }
 
           # Artifact directory names intentionally match ANDROID_ABI values
@@ -252,7 +274,7 @@ jobs:
           build_gstreamer_abi armv7 armeabi-v7a
 
           echo "=== GStreamer SDK output ==="
-          find gstreamer-android -maxdepth 3 -type f | sort | head -n 200
+          find gstreamer-android -maxdepth 3 -type f | sort | sed -n '1,200p'
 
       # -- libyuv (Google Chromium) ---------------------------------------------
       - name: Build libyuv for Android
