@@ -697,6 +697,7 @@ jobs:
               -DCMAKE_CXX_FLAGS="-static-libstdc++" \
               -DCMAKE_SHARED_LINKER_FLAGS="-static-libstdc++" \
               -DHOOK_PROXY_VERSION="$HOOK_VER" \
+              -DFRAME_BUILD_ID="$HOOK_VER" \
               -DSHADOWHOOK_ROOT=$GITHUB_WORKSPACE/fg/shadowhook-android \
               -DLIBYUV_ROOT=$GITHUB_WORKSPACE/fg/libyuv-android \
               -DTURBOJPEG_ROOT=$GITHUB_WORKSPACE/fg/turbojpeg-android \
