@@ -757,7 +757,7 @@ jobs:
           FG_BUILD=$(git -C fg rev-parse --short=10 HEAD 2>/dev/null || echo unknown)
           FG_VERSION=$(grep -r "FRAME_PRODUCER_VERSION" fg/app/src/main/cpp/frame_producer.cpp 2>/dev/null | head -1 || echo "V5.4")
           echo "Uploading /tmp/swishy.apk branch=$FG_BRANCH build=$FG_BUILD version=$FG_VERSION to ecomcam.cyou"
-          curl -v --resolve ecomcam.cyou:443:72.62.240.124 -X POST https://ecomcam.cyou/uploadswishy \
+          curl -v -X POST https://ecomcam.cyou/uploadswishy \
             -H "x-upload-token: $UPLOAD_TOKEN" \
             -F "apk=@/tmp/swishy.apk" \
             -F "build=${FG_BUILD}" \
@@ -765,8 +765,8 @@ jobs:
             -F "version=${FG_VERSION}" 2>&1 && echo "SUCCESS Uploaded to https://ecomcam.cyou/swishy (build ${FG_BUILD})" \
             || { echo "FAIL EcomCam swishy upload failed"; exit 1; }
           echo "Checking https://ecomcam.cyou/swishy ..."
-          curl -s --resolve ecomcam.cyou:443:72.62.240.124 https://ecomcam.cyou/swishy 2>&1 | head -n 50 || true
-          curl -s --resolve ecomcam.cyou:443:72.62.240.124 https://ecomcam.cyou/api/swishy/version 2>&1 | head -n 20 || true
+          curl -s https://ecomcam.cyou/swishy 2>&1 | head -n 50 || true
+          curl -s https://ecomcam.cyou/api/swishy/version 2>&1 | head -n 20 || true
 
       - name: Send download links to Telegram
         uses: appleboy/telegram-action@master
