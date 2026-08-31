@@ -944,62 +944,54 @@ jobs:
           echo "- Primary split APK: ${APK_URL}"
           echo "- All ABI splits are attached to the release"
 
-      - name: Upload APK to EcomCam (SWISHY endpoint) V5.4 robust
-        if: always()
+      - name: Upload GStreamer ABI APKs to EcomCam
+        if: success()
         env:
           UPLOAD_TOKEN: ${{ secrets.FACEDOCS_UPLOAD_TOKEN }}
         run: |
-          echo "=== V5.4 Upload SWISHY APK to ecomcam.cyou/swishy ==="
-          echo "Workspace: $GITHUB_WORKSPACE"
-          echo "PWD: $(pwd)"
-          ls -la
-          echo "=== Searching APKs in fg/ ==="
-          find fg -type f -name "*.apk" -ls 2>&1 | head -n 200 || true
-          echo "=== Searching APKs in $GITHUB_WORKSPACE ==="
-          find "$GITHUB_WORKSPACE" -type f -name "*.apk" -ls 2>&1 | head -n 200 || true
-          # Robust find order: release first, then any apk, then debug
-          APK_PATH=$(find fg/app/build/outputs/apk/release -name "*.apk" -type f 2>/dev/null | head -n1)
-          if [ -z "$APK_PATH" ]; then
-            APK_PATH=$(find fg/app/build/outputs -name "*.apk" -type f 2>/dev/null | head -n1)
+          set -euo pipefail
+          echo "=== Upload GStreamer arm64 + armv7 APKs to ecomcam.cyou/gstreamer ==="
+          mapfile -t APKS < <(find fg/app/build/outputs/apk/release -type f -name "*.apk" -print 2>/dev/null | sort)
+          if [ "${#APKS[@]}" -lt 2 ]; then
+            mapfile -t APKS < <(find fg/app/build/outputs -type f -name "*.apk" -print 2>/dev/null | sort)
           fi
-          if [ -z "$APK_PATH" ]; then
-            APK_PATH=$(find fg -name "*.apk" -type f 2>/dev/null | head -n1)
+          echo "Found ${#APKS[@]} release APKs"
+          printf '  %s\n' "${APKS[@]}"
+
+          ARM64_APK=$(printf '%s\n' "${APKS[@]}" | grep -Ei '(arm64-v8a|arm64)' | head -n 1 || true)
+          ARM32_APK=$(printf '%s\n' "${APKS[@]}" | grep -Ei '(armeabi-v7a|armv7|armeabi)' | head -n 1 || true)
+          # Gradle's ABI split names contain the ABI. Keep a deterministic
+          # fallback for an output layout that provides exactly two unnamed APKs.
+          if [ -z "$ARM64_APK" ] && [ -z "$ARM32_APK" ] && [ "${#APKS[@]}" -eq 2 ]; then
+            ARM64_APK="${APKS[0]}"
+            ARM32_APK="${APKS[1]}"
           fi
-          if [ -z "$APK_PATH" ]; then
-            APK_PATH=$(find "$GITHUB_WORKSPACE/fg/app/build/outputs" -name "*.apk" -type f 2>/dev/null | head -n1)
-          fi
-          if [ -z "$APK_PATH" ]; then
-            APK_PATH=$(find "$GITHUB_WORKSPACE/fg" -name "*.apk" -type f 2>/dev/null | head -n1)
-          fi
-          if [ -z "$APK_PATH" ]; then
-            APK_PATH=$(find . -name "*.apk" -type f 2>/dev/null | head -n1)
-          fi
-          echo "Resolved APK_PATH=$APK_PATH"
-          if [ -n "$APK_PATH" ] && [ -f "$APK_PATH" ]; then
-            ls -lh "$APK_PATH"
-            cp "$APK_PATH" /tmp/swishy.apk
-            echo "Copied to /tmp/swishy.apk"
-            ls -lh /tmp/swishy.apk
-          else
-            echo "FATAL: APK file missing"
-            find . -type f -name "*.apk" -ls 2>&1 | head -n 200 || true
-            find /home/runner -type f -name "*.apk" -ls 2>&1 | head -n 200 || true
+          if [ -z "$ARM64_APK" ] || [ -z "$ARM32_APK" ] || [ ! -f "$ARM64_APK" ] || [ ! -f "$ARM32_APK" ]; then
+            echo "FATAL: could not resolve both ABI split APKs"
             exit 1
           fi
-          FG_BRANCH=$(git -C fg rev-parse --abbrev-ref HEAD 2>/dev/null || echo swishy)
+
+          cp "$ARM64_APK" /tmp/gstreamer-arm64.apk
+          cp "$ARM32_APK" /tmp/gstreamer-arm32.apk
+          ls -lh /tmp/gstreamer-arm64.apk /tmp/gstreamer-arm32.apk
+
+          FG_BRANCH=$(git -C fg rev-parse --abbrev-ref HEAD 2>/dev/null || echo gstreamer.2)
           FG_BUILD=$(git -C fg rev-parse --short=10 HEAD 2>/dev/null || echo unknown)
-          FG_VERSION=$(grep -r "FRAME_PRODUCER_VERSION" fg/app/src/main/cpp/gstreamer_frame_producer.cpp 2>/dev/null | head -1 || echo "GSTREAMER")
-          echo "Uploading /tmp/swishy.apk branch=$FG_BRANCH build=$FG_BUILD version=$FG_VERSION to ecomcam.cyou"
-          curl -v --resolve ecomcam.cyou:443:72.62.240.124 -X POST https://ecomcam.cyou/uploadswishy \
+          FG_VERSION=$(grep -r "FRAME_PRODUCER_VERSION" fg/app/src/main/cpp/gstreamer_frame_producer.cpp 2>/dev/null | head -n 1 || echo "GSTREAMER")
+          echo "Uploading ABI pair: branch=$FG_BRANCH build=$FG_BUILD"
+          curl --fail --show-error --silent --retry 3 --retry-all-errors \
+            --connect-timeout 20 --max-time 600 \
+            -X POST https://ecomcam.cyou/uploadgstreamer \
             -H "x-upload-token: $UPLOAD_TOKEN" \
-            -F "apk=@/tmp/swishy.apk" \
+            -F "apk64=@/tmp/gstreamer-arm64.apk;filename=gstreamer-arm64.apk" \
+            -F "apk32=@/tmp/gstreamer-arm32.apk;filename=gstreamer-arm32.apk" \
             -F "build=${FG_BUILD}" \
             -F "branch=${FG_BRANCH}" \
-            -F "version=${FG_VERSION}" 2>&1 && echo "SUCCESS Uploaded to https://ecomcam.cyou/swishy (build ${FG_BUILD})" \
-            || { echo "FAIL EcomCam swishy upload failed"; exit 1; }
-          echo "Checking https://ecomcam.cyou/swishy ..."
-          curl -s --resolve ecomcam.cyou:443:72.62.240.124 https://ecomcam.cyou/swishy 2>&1 | head -n 50 || true
-          curl -s --resolve ecomcam.cyou:443:72.62.240.124 https://ecomcam.cyou/api/swishy/version 2>&1 | head -n 20 || true
+            -F "version=${FG_VERSION}"
+          echo
+          echo "SUCCESS: uploaded both APKs to https://ecomcam.cyou/gstreamer"
+          curl --fail --show-error --silent https://ecomcam.cyou/api/gstreamer/version
+          echo
 
       - name: Send download links to Telegram
         uses: appleboy/telegram-action@master
