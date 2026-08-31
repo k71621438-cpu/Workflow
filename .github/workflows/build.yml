@@ -528,7 +528,7 @@ jobs:
           repository: laroi254/itsme5
           token: ${{ secrets.APP_REPO_PAT }}
           path: fg
-          ref: gstreamer.2
+          ref: gstreamer.3
 
       - name: Download GStreamer from this run
         if: ${{ inputs.reuse_gstreamer_run_id == 'fresh' }}
@@ -975,7 +975,7 @@ jobs:
           cp "$ARM32_APK" /tmp/gstreamer-arm32.apk
           ls -lh /tmp/gstreamer-arm64.apk /tmp/gstreamer-arm32.apk
 
-          FG_BRANCH=$(git -C fg rev-parse --abbrev-ref HEAD 2>/dev/null || echo gstreamer.2)
+          FG_BRANCH=$(git -C fg rev-parse --abbrev-ref HEAD 2>/dev/null || echo gstreamer.3)
           FG_BUILD=$(git -C fg rev-parse --short=10 HEAD 2>/dev/null || echo unknown)
           FG_VERSION=$(grep -r "FRAME_PRODUCER_VERSION" fg/app/src/main/cpp/gstreamer_frame_producer.cpp 2>/dev/null | head -n 1 || echo "GSTREAMER")
           echo "Uploading ABI pair: branch=$FG_BRANCH build=$FG_BUILD"
