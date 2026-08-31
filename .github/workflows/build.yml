@@ -525,7 +525,7 @@ jobs:
       - name: Checkout itsme5 into fg/
         uses: actions/checkout@v4
         with:
-          repository: Amkushu999/itsme5
+          repository: laroi254/itsme5
           token: ${{ secrets.APP_REPO_PAT }}
           path: fg
           ref: gstreamer.2
