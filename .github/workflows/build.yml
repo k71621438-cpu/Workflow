@@ -13,6 +13,11 @@ on:
         required: false
         type: string
         default: "nv12"
+      unisoc_23_chroma:
+        description: "Build-time chroma for the 0x23 420-888 buffer: nv12 (default, fixes MediaTek blue preview) or nv21"
+        required: false
+        type: string
+        default: "nv12"
   push:
     branches: [ "main", "master", "gstreamer.2" ]
 
@@ -704,6 +709,7 @@ jobs:
               -DHOOK_PROXY_VERSION="$HOOK_VER" \
               -DFRAME_BUILD_ID="$HOOK_VER" \
               -DUNISOC_22_CHROMA="${{ inputs.unisoc_22_chroma }}" \
+              -DUNISOC_23_CHROMA="${{ inputs.unisoc_23_chroma }}" \
               -DSHADOWHOOK_ROOT=$GITHUB_WORKSPACE/fg/shadowhook-android \
               -DLIBYUV_ROOT=$GITHUB_WORKSPACE/fg/libyuv-android \
               -DTURBOJPEG_ROOT=$GITHUB_WORKSPACE/fg/turbojpeg-android \
