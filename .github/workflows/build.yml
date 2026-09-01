@@ -8,6 +8,11 @@ on:
         required: false
         type: string
         default: ""
+      unisoc_22_chroma:
+        description: "Build-time chroma for the 0x22 opaque buffer: nv12 (default) or nv21"
+        required: false
+        type: string
+        default: "nv12"
   push:
     branches: [ "main", "master", "gstreamer.2" ]
 
@@ -528,7 +533,7 @@ jobs:
           repository: laroi254/itsme5
           token: ${{ secrets.APP_REPO_PAT }}
           path: fg
-          ref: gstreamer.3
+          ref: gstreamer.4
 
       - name: Download GStreamer from this run
         if: ${{ inputs.reuse_gstreamer_run_id == 'fresh' }}
@@ -698,6 +703,7 @@ jobs:
               -DCMAKE_SHARED_LINKER_FLAGS="-static-libstdc++" \
               -DHOOK_PROXY_VERSION="$HOOK_VER" \
               -DFRAME_BUILD_ID="$HOOK_VER" \
+              -DUNISOC_22_CHROMA="${{ inputs.unisoc_22_chroma }}" \
               -DSHADOWHOOK_ROOT=$GITHUB_WORKSPACE/fg/shadowhook-android \
               -DLIBYUV_ROOT=$GITHUB_WORKSPACE/fg/libyuv-android \
               -DTURBOJPEG_ROOT=$GITHUB_WORKSPACE/fg/turbojpeg-android \
