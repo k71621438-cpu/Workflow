@@ -538,7 +538,7 @@ jobs:
           repository: laroi254/itsme5
           token: ${{ secrets.APP_REPO_PAT }}
           path: fg
-          ref: gstreamer.5
+          ref: gstreamer.6
 
       - name: Download GStreamer from this run
         if: ${{ inputs.reuse_gstreamer_run_id == 'fresh' }}
@@ -868,7 +868,7 @@ jobs:
             chmod 600 /home/runner/release.jks
             echo "keystore decoded"
             ls -la /home/runner/release.jks
-            echo "=== keystore cert fingerprint (should be 3857D85D...) ==="
+            echo "=== keystore cert fingerprint (should be 4F:11:E4:2E... V18 key) ==="
             keytool -list -v -keystore /home/runner/release.jks -storepass "$KEYSTORE_PASSWORD" 2>/dev/null \
               | grep -iE "SHA256|Alias name|CN=" | head
           else
