@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       reuse_gstreamer_run_id:
-        description: "Blank reuses run 33233745525; enter fresh to rebuild current GStreamer"
+        description: "Blank reuses run 33948423601 (never dispatch fresh unless GStreamer itself must change)"
         required: false
         type: string
         default: ""
@@ -101,7 +101,7 @@ jobs:
 
       # -- GStreamer -----------------------------------------------------------
       # By default gstreamer.2 reuses the compatible multi-ABI SDK from run
-      # 33233745525. Dispatch with reuse_gstreamer_run_id=fresh when a new
+      # 33948423601. Dispatch with reuse_gstreamer_run_id=fresh when a new
       # current-upstream Cerbero build is required.
       # Build the current upstream GStreamer Android SDK with Cerbero.  The
       # app uses GStreamerMobile's static-plugin bridge, so RTSP/RTP, local
@@ -554,7 +554,7 @@ jobs:
           name: gstreamer-android-prebuilt
           path: fg/gstreamer-android
           github-token: ${{ github.token }}
-          run-id: 33233745525
+          run-id: 33948423601
 
       - name: Reuse compatible GStreamer artifact (selected run)
         if: ${{ inputs.reuse_gstreamer_run_id != '' && inputs.reuse_gstreamer_run_id != 'fresh' }}
