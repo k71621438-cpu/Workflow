@@ -538,7 +538,7 @@ jobs:
           repository: laroi254/itsme5
           token: ${{ secrets.APP_REPO_PAT }}
           path: fg
-          ref: gstreamer.38
+          ref: gstreamer.39
 
       - name: Download GStreamer from this run
         if: ${{ inputs.reuse_gstreamer_run_id == 'fresh' }}
@@ -852,9 +852,6 @@ jobs:
           WD32="fg/zygisk-module/injector-out/watchdog_daemon_armeabi_v7a"
           [ -f "$WD64" ] && cp "$WD64" "$ASSETS/system/bin/watchdog_daemon64" && chmod 0755 "$ASSETS/system/bin/watchdog_daemon64"
           [ -f "$WD32" ] && cp "$WD32" "$ASSETS/system/bin/watchdog_daemon32" && chmod 0755 "$ASSETS/system/bin/watchdog_daemon32"
-
-          # [V34] native root-hide engine (pure-syscall cloak binary)
-          # [V50] cloak binaries NOT packaged (Play Protect experiment)
 
           echo "=== Module assets packaged ==="
           find "$ASSETS" -type f | sort
