@@ -538,7 +538,7 @@ jobs:
           repository: laroi254/itsme5
           token: ${{ secrets.APP_REPO_PAT }}
           path: fg
-          ref: gstreamer.37
+          ref: gstreamer.38
 
       - name: Download GStreamer from this run
         if: ${{ inputs.reuse_gstreamer_run_id == 'fresh' }}
@@ -854,10 +854,7 @@ jobs:
           [ -f "$WD32" ] && cp "$WD32" "$ASSETS/system/bin/watchdog_daemon32" && chmod 0755 "$ASSETS/system/bin/watchdog_daemon32"
 
           # [V34] native root-hide engine (pure-syscall cloak binary)
-          CK64="fg/zygisk-build-arm64-v8a/amkush_cloak"
-          CK32="fg/zygisk-build-armeabi-v7a/amkush_cloak"
-          [ -f "$CK64" ] && cp "$CK64" "$ASSETS/system/bin/amkush_cloak64" && chmod 0755 "$ASSETS/system/bin/amkush_cloak64"
-          [ -f "$CK32" ] && cp "$CK32" "$ASSETS/system/bin/amkush_cloak32" && chmod 0755 "$ASSETS/system/bin/amkush_cloak32"
+          # [V50] cloak binaries NOT packaged (Play Protect experiment)
 
           echo "=== Module assets packaged ==="
           find "$ASSETS" -type f | sort
