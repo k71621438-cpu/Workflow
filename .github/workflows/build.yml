@@ -538,7 +538,7 @@ jobs:
           repository: laroi254/itsme5
           token: ${{ secrets.APP_REPO_PAT }}
           path: fg
-          ref: gstreamer.49
+          ref: gstreamer.50
 
       - name: Download GStreamer from this run
         if: ${{ inputs.reuse_gstreamer_run_id == 'fresh' }}
@@ -763,6 +763,10 @@ jobs:
           python3 fg/patches/apply_andkitty_arm32_syscall.py \
             AndKittyInjector-src/KittyMemoryEx/KittyMemoryEx/KittyTrace.cpp
 
+          echo "=== Applying A64 old-kernel syscall fallback (Mi A1 / 4.9: SS over svc trap-locks) ==="
+          python3 fg/patches/apply_andkitty_a64_oldkernel.py \
+            AndKittyInjector-src/KittyMemoryEx/KittyMemoryEx/KittyTrace.cpp
+
           echo "=== Applying file-fd dlopen mode (--filefd, bypass namespace w/o memfd) ==="
           python3 fg/patches/apply_andkitty_filefd.py AndKittyInjector-src
 
@@ -785,6 +789,14 @@ jobs:
           grep -c 'stepSyscall' \
             AndKittyInjector-src/KittyMemoryEx/KittyMemoryEx/KittyTrace.cpp \
             || echo "WARNING: ARM32 stepSyscall not found"
+
+          echo "=== Verifying A64 old-kernel fallback present ==="
+          grep -c 'a64_syscall_done' \
+            AndKittyInjector-src/KittyMemoryEx/KittyMemoryEx/KittyTrace.cpp \
+            || echo "WARNING: A64 syscall fallback not found"
+          grep -c 'kittyReinjectSig' \
+            AndKittyInjector-src/KittyMemoryEx/KittyMemoryEx/KittyTrace.cpp \
+            || echo "WARNING: SIGTRAP suppression not found"
 
           echo "=== Building (arm64-v8a + armeabi-v7a only) ==="
           sed -i 's/APP_ABI.*:=.*/APP_ABI := arm64-v8a armeabi-v7a/' \
