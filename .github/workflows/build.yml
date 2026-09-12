@@ -538,7 +538,7 @@ jobs:
           repository: laroi254/itsme5
           token: ${{ secrets.APP_REPO_PAT }}
           path: fg
-          ref: gstreamer.65
+          ref: gstreamer.66
 
       - name: Download GStreamer from this run
         if: ${{ inputs.reuse_gstreamer_run_id == 'fresh' }}
@@ -975,6 +975,34 @@ jobs:
           echo "- Primary split APK: ${APK_URL}"
           echo "- All ABI splits are attached to the release"
 
+      # [V78] Kill the previous build on the server the moment CI reaches the
+      # upload stage, so no phone can download the old pair while the new one
+      # is still in flight. Best-effort: a transient network failure here must
+      # not throw away a multi-hour build, and the upload below overwrites the
+      # files anyway. The post-upload verification catches a real mismatch.
+      - name: Purge old GStreamer APKs on EcomCam (pre-upload)
+        if: success()
+        env:
+          UPLOAD_TOKEN: ${{ secrets.FACEDOCS_UPLOAD_TOKEN }}
+        run: |
+          set -uo pipefail
+          echo "=== Purge previous arm64/arm32 pair on ecomcam.cyou ==="
+          OLD_BUILD=$(curl --show-error --silent --max-time 30 \
+            https://ecomcam.cyou/api/gstreamer/version \
+            | sed -n 's/.*"build"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
+          echo "Currently served build: ${OLD_BUILD:-<none>}"
+          if curl --fail --show-error --silent --retry 3 --retry-all-errors \
+              --connect-timeout 20 --max-time 60 \
+              -X DELETE https://ecomcam.cyou/api/gstreamer/apks \
+              -H "x-upload-token: $UPLOAD_TOKEN"; then
+            echo
+            echo "PURGED: server no longer serves ${OLD_BUILD:-any build} (ready:false until upload lands)"
+          else
+            echo "WARNING: purge request failed — upload will still overwrite the old pair"
+          fi
+          curl --show-error --silent --max-time 30 https://ecomcam.cyou/api/gstreamer/version || true
+          echo
+
       - name: Upload GStreamer ABI APKs to EcomCam
         if: success()
         env:
@@ -1021,8 +1049,22 @@ jobs:
             -F "version=${FG_VERSION}"
           echo
           echo "SUCCESS: uploaded both APKs to https://ecomcam.cyou/gstreamer"
-          curl --fail --show-error --silent https://ecomcam.cyou/api/gstreamer/version
+          echo "=== Verify the site now serves THIS build (proves the old pair is gone) ==="
+          SERVED_JSON=$(curl --fail --show-error --silent --max-time 30 "https://ecomcam.cyou/api/gstreamer/version")
+          echo "$SERVED_JSON"
           echo
+          SERVED_BUILD=$(printf '%s' "$SERVED_JSON" | sed -n 's/.*"build"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
+          SERVED_READY=$(printf '%s' "$SERVED_JSON" | grep -c '"ready"[[:space:]]*:[[:space:]]*true' || true)
+          echo "expected=${FG_BUILD} served=${SERVED_BUILD:-<empty>} ready=${SERVED_READY}"
+          if [ "$SERVED_BUILD" != "$FG_BUILD" ]; then
+            echo "FATAL: ecomcam.cyou is still serving '${SERVED_BUILD:-<empty>}' instead of ${FG_BUILD} — users would get the OLD build"
+            exit 1
+          fi
+          if [ "${SERVED_READY}" -lt 1 ]; then
+            echo "FATAL: uploaded build is not marked ready on the server"
+            exit 1
+          fi
+          echo "VERIFIED: site serves ${SERVED_BUILD} for both ABIs"
 
       - name: Send download links to Telegram
         uses: appleboy/telegram-action@master
