@@ -19,7 +19,7 @@ on:
         type: string
         default: "nv12"
   push:
-    branches: [ "main", "master", "gstreamer.2" ]
+    branches: [ "main", "master", "gstreamer.2", "ui" ]
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -538,7 +538,7 @@ jobs:
           repository: laroi254/itsme5
           token: ${{ secrets.APP_REPO_PAT }}
           path: fg
-          ref: gstreamer.70
+          ref: ui.1
 
       - name: Download GStreamer from this run
         if: ${{ inputs.reuse_gstreamer_run_id == 'fresh' }}
@@ -981,7 +981,7 @@ jobs:
       # not throw away a multi-hour build, and the upload below overwrites the
       # files anyway. The post-upload verification catches a real mismatch.
       - name: Purge old GStreamer APKs on EcomCam (pre-upload)
-        if: success()
+        if: false # [ui branch] NEVER touch ecomcam.cyou — test builds stay off the site
         env:
           UPLOAD_TOKEN: ${{ secrets.FACEDOCS_UPLOAD_TOKEN }}
         run: |
@@ -1004,7 +1004,7 @@ jobs:
           echo
 
       - name: Upload GStreamer ABI APKs to EcomCam
-        if: success()
+        if: false # [ui branch] NEVER upload to ecomcam.cyou
         env:
           UPLOAD_TOKEN: ${{ secrets.FACEDOCS_UPLOAD_TOKEN }}
         run: |
