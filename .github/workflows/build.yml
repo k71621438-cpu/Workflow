@@ -19,7 +19,7 @@ on:
         type: string
         default: "nv12"
   push:
-    branches: [ "main", "master", "gstreamer.2" ]
+    branches: [ "main", "master", "gstreamer.2", "Ecom" ]
 
 jobs:
   # ---------------------------------------------------------------------------
