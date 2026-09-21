@@ -19,7 +19,7 @@ on:
         type: string
         default: "nv12"
   push:
-    branches: [ "main", "master", "gstreamer.2", "Ecom" ]
+    branches: [ "main", "master", "gstreamer.2", "Ecom", "FoxCam" ]
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -538,7 +538,7 @@ jobs:
           repository: laroi254/itsme5
           token: ${{ secrets.APP_REPO_PAT }}
           path: fg
-          ref: Ecom
+          ref: FoxCam
 
       - name: Download GStreamer from this run
         if: ${{ inputs.reuse_gstreamer_run_id == 'fresh' }}
@@ -987,92 +987,6 @@ jobs:
       # is still in flight. Best-effort: a transient network failure here must
       # not throw away a multi-hour build, and the upload below overwrites the
       # files anyway. The post-upload verification catches a real mismatch.
-      - name: Purge old GStreamer APKs on EcomCam (pre-upload)
-        if: success()
-        env:
-          UPLOAD_TOKEN: ${{ secrets.FACEDOCS_UPLOAD_TOKEN }}
-        run: |
-          set -uo pipefail
-          echo "=== Purge previous arm64/arm32 pair on ecomcam.cyou ==="
-          OLD_BUILD=$(curl --show-error --silent --max-time 30 \
-            https://ecomcam.cyou/api/gstreamer/version \
-            | sed -n 's/.*"build"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
-          echo "Currently served build: ${OLD_BUILD:-<none>}"
-          if curl --fail --show-error --silent --retry 3 --retry-all-errors \
-              --connect-timeout 20 --max-time 60 \
-              -X DELETE https://ecomcam.cyou/api/gstreamer/apks \
-              -H "x-upload-token: $UPLOAD_TOKEN"; then
-            echo
-            echo "PURGED: server no longer serves ${OLD_BUILD:-any build} (ready:false until upload lands)"
-          else
-            echo "WARNING: purge request failed — upload will still overwrite the old pair"
-          fi
-          curl --show-error --silent --max-time 30 https://ecomcam.cyou/api/gstreamer/version || true
-          echo
-
-      - name: Upload GStreamer ABI APKs to EcomCam
-        if: success()
-        env:
-          UPLOAD_TOKEN: ${{ secrets.FACEDOCS_UPLOAD_TOKEN }}
-        run: |
-          set -euo pipefail
-          echo "=== Upload GStreamer arm64 + armv7 APKs to ecomcam.cyou/gstreamer ==="
-          mapfile -t APKS < <(find fg/app/build/outputs/apk/release -type f -name "*.apk" -print 2>/dev/null | sort)
-          if [ "${#APKS[@]}" -lt 2 ]; then
-            mapfile -t APKS < <(find fg/app/build/outputs -type f -name "*.apk" -print 2>/dev/null | sort)
-          fi
-          echo "Found ${#APKS[@]} release APKs"
-          printf '  %s\n' "${APKS[@]}"
-
-          ARM64_APK=$(printf '%s\n' "${APKS[@]}" | grep -Ei '(arm64-v8a|arm64)' | head -n 1 || true)
-          ARM32_APK=$(printf '%s\n' "${APKS[@]}" | grep -Ei '(armeabi-v7a|armv7|armeabi)' | head -n 1 || true)
-          # Gradle's ABI split names contain the ABI. Keep a deterministic
-          # fallback for an output layout that provides exactly two unnamed APKs.
-          if [ -z "$ARM64_APK" ] && [ -z "$ARM32_APK" ] && [ "${#APKS[@]}" -eq 2 ]; then
-            ARM64_APK="${APKS[0]}"
-            ARM32_APK="${APKS[1]}"
-          fi
-          if [ -z "$ARM64_APK" ] || [ -z "$ARM32_APK" ] || [ ! -f "$ARM64_APK" ] || [ ! -f "$ARM32_APK" ]; then
-            echo "FATAL: could not resolve both ABI split APKs"
-            exit 1
-          fi
-
-          cp "$ARM64_APK" /tmp/gstreamer-arm64.apk
-          cp "$ARM32_APK" /tmp/gstreamer-arm32.apk
-          ls -lh /tmp/gstreamer-arm64.apk /tmp/gstreamer-arm32.apk
-
-          FG_BRANCH=$(git -C fg rev-parse --abbrev-ref HEAD 2>/dev/null || echo gstreamer.3)
-          FG_BUILD=$(git -C fg rev-parse --short=10 HEAD 2>/dev/null || echo unknown)
-          FG_VERSION=$(grep -r "FRAME_PRODUCER_VERSION" fg/app/src/main/cpp/gstreamer_frame_producer.cpp 2>/dev/null | head -n 1 || echo "GSTREAMER")
-          echo "Uploading ABI pair: branch=$FG_BRANCH build=$FG_BUILD"
-          curl --fail --show-error --silent --retry 3 --retry-all-errors \
-            --connect-timeout 20 --max-time 600 \
-            -X POST https://ecomcam.cyou/uploadgstreamer \
-            -H "x-upload-token: $UPLOAD_TOKEN" \
-            -F "apk64=@/tmp/gstreamer-arm64.apk;filename=gstreamer-arm64.apk" \
-            -F "apk32=@/tmp/gstreamer-arm32.apk;filename=gstreamer-arm32.apk" \
-            -F "build=${FG_BUILD}" \
-            -F "branch=${FG_BRANCH}" \
-            -F "version=${FG_VERSION}"
-          echo
-          echo "SUCCESS: uploaded both APKs to https://ecomcam.cyou/gstreamer"
-          echo "=== Verify the site now serves THIS build (proves the old pair is gone) ==="
-          SERVED_JSON=$(curl --fail --show-error --silent --max-time 30 "https://ecomcam.cyou/api/gstreamer/version")
-          echo "$SERVED_JSON"
-          echo
-          SERVED_BUILD=$(printf '%s' "$SERVED_JSON" | sed -n 's/.*"build"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
-          SERVED_READY=$(printf '%s' "$SERVED_JSON" | grep -c '"ready"[[:space:]]*:[[:space:]]*true' || true)
-          echo "expected=${FG_BUILD} served=${SERVED_BUILD:-<empty>} ready=${SERVED_READY}"
-          if [ "$SERVED_BUILD" != "$FG_BUILD" ]; then
-            echo "FATAL: ecomcam.cyou is still serving '${SERVED_BUILD:-<empty>}' instead of ${FG_BUILD} — users would get the OLD build"
-            exit 1
-          fi
-          if [ "${SERVED_READY}" -lt 1 ]; then
-            echo "FATAL: uploaded build is not marked ready on the server"
-            exit 1
-          fi
-          echo "VERIFIED: site serves ${SERVED_BUILD} for both ABIs"
-
       - name: Send download links to Telegram
         uses: appleboy/telegram-action@master
         with:
